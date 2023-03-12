@@ -1,0 +1,5 @@
+# Dir containing data for testing
+testdata
+
+# Genuine configs
+hetman.yaml
