@@ -1,0 +1,11 @@
+targets:
+  - id: nginx
+    paths:
+      - testdata/nginx.log 
+      - testdata/*.log 
+    forwarders:
+      - url: http://localhost:3100/loki/api/v1/push
+        add_tags:
+          label: hetman
+          source: nginx
+          dest: loki
