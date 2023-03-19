@@ -9,14 +9,19 @@ import (
 	"github.com/knadh/koanf/providers/file"
 )
 
+type ForwarderConfig struct {
+	URL     string            `koanf:"url"`
+	AddTags map[string]string `koanf:"add_tags"`
+}
+
+type TargetConfig struct {
+	Id         string            `koanf:"id"`
+	Paths      []string          `koanf:"paths"`
+	Forwarders []ForwarderConfig `koanf:"forwarders"`
+}
+
 type Config struct {
-	Paths      []string `koanf:"paths"`
-	Forwarders []struct {
-		Loki struct {
-			Label string `koanf:"label"`
-			URL   string `koanf:"url"`
-		} `koanf:"loki"`
-	} `koanf:"forwarders"`
+	Targets []TargetConfig `koanf:"targets"`
 }
 
 const (
