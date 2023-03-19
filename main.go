@@ -13,17 +13,6 @@ import (
 	"github.com/hainenber/hetman/forwarder"
 )
 
-func isReadable(filepaths []string) []error {
-	errors := []error{}
-	for _, filepath := range filepaths {
-		_, err := os.Open(filepath)
-		if err != nil {
-			errors = append(errors, err)
-		}
-	}
-	return errors
-}
-
 func main() {
 	logger := zerolog.New(os.Stdout)
 
