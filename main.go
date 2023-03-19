@@ -2,7 +2,6 @@ package main
 
 import (
 	"os"
-	"path/filepath"
 
 	stdlog "log"
 
@@ -23,27 +22,10 @@ func main() {
 		panic(err)
 	}
 
-	if conf.Paths == nil || len(conf.Paths) == 0 {
-		logger.Error().Msgf("Paths for input logs cannot be parsed")
-	}
-
 	// Translate wildcards into matched files
-	// TODO: Move to approriate place as "input sanitizer"
-	matchedFilepaths := make(map[string]bool)
-	translatedInputs := []string{}
-	for _, path := range conf.Paths {
-		matches, err := filepath.Glob(path)
-		if err != nil {
-			logger.Error().Err(err).Msgf("Cannot match glob pattern \"%v\"", path)
-		}
-		for _, match := range matches {
-			if _, exists := matchedFilepaths[match]; !exists {
-				matchedFilepaths[match] = true
-			}
-		}
-	}
-	for file, _ := range matchedFilepaths {
-		translatedInputs = append(translatedInputs, file)
+	conf, err = conf.TranslateWildcards()
+	if err != nil {
+		logger.Error().Err(err).Msg("")
 	}
 
 	// Logger for tailer's output

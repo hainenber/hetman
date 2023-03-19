@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 
 	"github.com/knadh/koanf"
 	"github.com/knadh/koanf/parsers/yaml"
@@ -45,4 +46,28 @@ func NewConfig(configPath string) (*Config, error) {
 	}
 
 	return &config, nil
+}
+
+func (c *Config) TranslateWildcards() (*Config, error) {
+	for i, target := range c.Targets {
+		matchedFilepaths := make(map[string]bool)
+		translatedInputs := []string{}
+		for _, path := range target.Paths {
+			matches, err := filepath.Glob(path)
+			if err != nil {
+				return nil, err
+			}
+			for _, match := range matches {
+				if _, exists := matchedFilepaths[match]; !exists {
+					matchedFilepaths[match] = true
+				}
+			}
+		}
+		for file := range matchedFilepaths {
+			translatedInputs = append(translatedInputs, file)
+		}
+		c.Targets[i].Paths = translatedInputs
+	}
+
+	return c, nil
 }
