@@ -5,17 +5,18 @@ import (
 
 	stdlog "log"
 
-	"github.com/nxadm/tail"
 	"github.com/rs/zerolog"
 
 	"github.com/hainenber/hetman/config"
 	"github.com/hainenber/hetman/forwarder"
+	"github.com/hainenber/hetman/tailer"
+	"github.com/hainenber/hetman/utils"
 )
 
 func main() {
 	logger := zerolog.New(os.Stdout)
 
-	// Read
+	// Read config from file
 	conf, err := config.NewConfig(config.DefaultConfigPath)
 	if err != nil {
 		logger.Error().Err(err).Msgf("Cannot read config from %s", config.DefaultConfigPath)
@@ -29,47 +30,45 @@ func main() {
 	}
 
 	// Logger for tailer's output
-	tailerLogger := stdlog.New(logger.With().Str("source", "tailer").Logger(), "", stdlog.Default().Flags())
+	tailerLogger := stdlog.New(
+		logger.With().Str("source", "tailer").Logger(),
+		"",
+		stdlog.Default().Flags(),
+	)
 
 	// Check if input files are readable by current user
-	errors := isReadable(translatedInputs)
-	if len(errors) > 0 {
-		for _, err := range errors {
-			logger.Error().Err(err).Msg("")
-		}
-	}
-
-	// WIP: Forward to log servers
-	// TODO: Selectively forward via corresponding forwarder
-	logQueue := make(chan string)
-	go func() {
-		for {
-			line := <-logQueue
-			for _, fwd := range conf.Forwarders {
-				if fwd.Loki.URL != "" {
-					err = forwarder.Forward(fwd.Loki.URL, line)
-					if err != nil {
-						logger.Error().Err(err).Msg("")
-					}
-				}
+	for _, target := range conf.Targets {
+		errors := utils.IsReadable(target.Paths)
+		if len(errors) > 0 {
+			for _, err := range errors {
+				logger.Error().Err(err).Msg("")
 			}
 		}
-	}()
-
-	// Tail files
-	for _, file := range translatedInputs {
-		t, err := tail.TailFile(
-			file,
-			tail.Config{Follow: true, ReOpen: true, Logger: tailerLogger},
-		)
-		if err != nil {
-			panic(err)
-		}
-
-		for line := range t.Lines {
-			logQueue <- line.Text
-		}
 	}
 
-	// TODO: Graceful shutdown
+	// Forward to log servers
+	// Seperate goroutine with own lifecycle
+	// 	for each target, aka separate forwarder
+	for _, target := range conf.Targets {
+		fwds := make([]*forwarder.Forwarder, len(target.Forwarders))
+		for i, fwdConf := range target.Forwarders {
+			fwd := forwarder.NewForwarder(fwdConf)
+			fwd.Run()
+			fwds[i] = fwd
+		}
+
+		// WIP: Remember last offset of input files before getting terminated
+		// TODO: Prevent sending duplicated logs
+		// Tail files
+		for _, file := range target.Paths {
+			t, err := tailer.NewTailer(file, tailerLogger)
+			if err != nil {
+				logger.Fatal().Err(err).Msg("")
+			}
+			for _, fwd := range fwds {
+				t.RegisterForwarder(fwd)
+			}
+			t.Tail()
+		}
+	}
 }
