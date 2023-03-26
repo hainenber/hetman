@@ -2,8 +2,8 @@ package main
 
 import (
 	"os"
-
-	stdlog "log"
+	"os/signal"
+	"syscall"
 
 	"github.com/rs/zerolog"
 
@@ -19,22 +19,20 @@ func main() {
 	// Read config from file
 	conf, err := config.NewConfig(config.DefaultConfigPath)
 	if err != nil {
-		logger.Error().Err(err).Msgf("Cannot read config from %s", config.DefaultConfigPath)
-		panic(err)
+		logger.Fatal().Err(err).Msgf("Cannot read config from %s", config.DefaultConfigPath)
 	}
 
 	// Translate wildcards into matched files
 	conf, err = conf.TranslateWildcards()
 	if err != nil {
-		logger.Error().Err(err).Msg("")
+		logger.Fatal().Err(err).Msg("")
 	}
 
-	// Logger for tailer's output
-	tailerLogger := stdlog.New(
-		logger.With().Str("source", "tailer").Logger(),
-		"",
-		stdlog.Default().Flags(),
-	)
+	// Prevent duplicate ID of targets
+	err = conf.DetectDuplicateTargetID()
+	if err != nil {
+		logger.Fatal().Err(err).Msg("")
+	}
 
 	// Check if input files are readable by current user
 	for _, target := range conf.Targets {
@@ -55,26 +53,46 @@ func main() {
 	// Forward to log servers
 	// Seperate goroutine with own lifecycle
 	// 	for each target, aka separate forwarder
+	// Prevent duplicate tailers by mapping unique paths to several matching forwarders
+	pathForwarderConfigMappings := make(map[string][]config.ForwarderConfig)
 	for _, target := range conf.Targets {
-		fwds := make([]*forwarder.Forwarder, len(target.Forwarders))
-		for i, fwdConf := range target.Forwarders {
-			fwd := forwarder.NewForwarder(fwdConf)
-			fwd.Run()
-			fwds[i] = fwd
-		}
-
-		// WIP: Remember last offset of input files before getting terminated
-		// TODO: Prevent sending duplicated logs
-		// Tail files
 		for _, file := range target.Paths {
-			t, err := tailer.NewTailer(file, tailerLogger)
-			if err != nil {
-				logger.Fatal().Err(err).Msg("")
+			fwdConfs, ok := pathForwarderConfigMappings[file]
+			if ok {
+				pathForwarderConfigMappings[file] = append(fwdConfs, target.Forwarders...)
+			} else {
+				pathForwarderConfigMappings[file] = target.Forwarders
 			}
-			for _, fwd := range fwds {
-				t.RegisterForwarder(fwd)
-			}
-			t.Tail()
+		}
+	}
+
+	// WIP: Save last known position of tailed files before getting terminated
+	//	to prevent sending duplicated logs
+	tailerForwarderMappings := make(map[*tailer.Tailer][]*forwarder.Forwarder)
+	for file, fwdConfs := range pathForwarderConfigMappings {
+		t, err := tailer.NewTailer(file, logger)
+		if err != nil {
+			logger.Fatal().Err(err).Msg("")
+		}
+		fwds := make([]*forwarder.Forwarder, len(fwdConfs))
+		for i, fwdConf := range fwdConfs {
+			fwd := forwarder.NewForwarder(fwdConf)
+			fwds[i] = fwd
+			fwd.Run()
+		}
+		for _, fwd := range fwds {
+			t.RegisterForwarder(fwd)
+		}
+		t.Run()
+		tailerForwarderMappings[t] = fwds
+	}
+
+	// Gracefully close forwarders and tailers
+	<-sigs
+	for tailer, fwds := range tailerForwarderMappings {
+		tailer.Close()
+		for _, fwd := range fwds {
+			fwd.Close()
 		}
 	}
 }
