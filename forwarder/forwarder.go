@@ -23,6 +23,7 @@ type Payload struct {
 }
 
 type Forwarder struct {
+	done    chan struct{}
 	conf    *config.ForwarderConfig
 	LogChan chan string
 	logger  zerolog.Logger
@@ -31,27 +32,39 @@ type Forwarder struct {
 func NewForwarder(conf config.ForwarderConfig) *Forwarder {
 	return &Forwarder{
 		conf:    &conf,
+		done:    make(chan struct{}),
 		LogChan: make(chan string),
 		logger:  zerolog.New(os.Stdout),
 	}
 }
 
-func (f *Forwarder) Run() {
+func (f Forwarder) Run() {
 	go func() {
 		for {
-			fmt.Println("goroutine is still running")
-			line := <-f.LogChan
-			if f.conf.URL != "" {
-				err := f.Forward(f.conf.URL, line)
-				if err != nil {
-					f.logger.Error().Err(err).Msg("")
+			select {
+			case line := <-f.LogChan:
+				{
+					if f.conf.URL != "" {
+						err := f.Forward(f.conf.URL, line)
+						if err != nil {
+							f.logger.Error().Err(err).Msg("")
+						}
+					}
 				}
+			case <-f.done:
+				close(f.done)
+				close(f.LogChan)
+				return
 			}
 		}
 	}()
 }
 
-func (f *Forwarder) Forward(url, logLine string) error {
+func (f Forwarder) Close() {
+	f.done <- struct{}{}
+}
+
+func (f Forwarder) Forward(url, logLine string) error {
 	client := &http.Client{}
 
 	// Fetch tags from config
