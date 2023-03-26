@@ -1,3 +1,6 @@
+global:
+  registry_directory: /tmp
+
 targets:
   - id: nginx
     paths:

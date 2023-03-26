@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -20,8 +21,13 @@ type TargetConfig struct {
 	Forwarders []ForwarderConfig `koanf:"forwarders"`
 }
 
+type GlobalConfig struct {
+	RegistryDir string `koanf:"registry_directory"`
+}
+
 type Config struct {
-	Targets []TargetConfig `koanf:"targets"`
+	GlobalConfig GlobalConfig   `koanf:"global"`
+	Targets      []TargetConfig `koanf:"targets"`
 }
 
 const (
@@ -75,4 +81,16 @@ func (c *Config) TranslateWildcards() (*Config, error) {
 	}
 
 	return c, nil
+}
+
+func (c Config) DetectDuplicateTargetID() error {
+	targetIds := make(map[string]bool, len(c.Targets))
+	for _, target := range c.Targets {
+		_, ok := targetIds[target.Id]
+		if ok {
+			return fmt.Errorf("duplicate target ID: %s", target.Id)
+		}
+		targetIds[target.Id] = true
+	}
+	return nil
 }

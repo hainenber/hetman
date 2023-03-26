@@ -17,6 +17,12 @@ func TestNewConfig(t *testing.T) {
 		t.Errorf("expect 1 target, got %v target", len(conf.Targets))
 	}
 
+	regPath := conf.GlobalConfig.RegistryDir
+	expectedRegPath := "/tmp"
+	if regPath != expectedRegPath {
+		t.Errorf("expect %s, got %s", regPath, expectedRegPath)
+	}
+
 	addedTags := conf.Targets[0].Forwarders[0].AddTags
 	expectedAddedTags := map[string]string{"label": "hetman", "source": "nginx", "dest": "loki"}
 
@@ -36,7 +42,7 @@ func TestTranslateWildcards(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	fnames := make([]string, 2)
-	for i, _ := range make([]bool, 2) {
+	for i := range make([]bool, 2) {
 		fname := filepath.Join(tmpDir, fmt.Sprintf("file%v.log", i))
 		os.WriteFile(fname, []byte{1, 2}, 0666)
 		fnames[i] = fname
@@ -62,5 +68,23 @@ func TestTranslateWildcards(t *testing.T) {
 				t.Errorf("expect %v or %v, got %v", fnames[0], fnames[1], path)
 			}
 		}
+	}
+}
+
+func TestDetectDuplicateTargetID(t *testing.T) {
+	conf := &Config{
+		Targets: []TargetConfig{
+			{
+				Id: "1",
+			},
+			{
+				Id: "1",
+			},
+		},
+	}
+
+	err := conf.DetectDuplicateTargetID()
+	if err == nil {
+		t.Errorf("expect %v, got nil", err)
 	}
 }
