@@ -46,6 +46,12 @@ func main() {
 		}
 	}
 
+	// Intercept termination signals like Ctrl-C
+	// Graceful shutdown and cleanup ongoing goroutines, channels
+	sigs := make(chan os.Signal, 1)
+	defer close(sigs)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+
 	// Forward to log servers
 	// Seperate goroutine with own lifecycle
 	// 	for each target, aka separate forwarder
