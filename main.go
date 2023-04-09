@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 
 	"github.com/rs/zerolog"
@@ -71,24 +72,29 @@ func main() {
 		}
 	}
 
-	// WIP: Save last known position of tailed files before getting terminated
-	//	to prevent sending duplicated logs
+	var wg sync.WaitGroup
+
 	tailerForwarderMappings := make(map[*tailer.Tailer][]*forwarder.Forwarder)
 	for file, fwdConfs := range pathForwarderConfigMappings {
 		t, err := tailer.NewTailer(file, logger)
 		if err != nil {
 			logger.Fatal().Err(err).Msg("")
 		}
+
 		fwds := make([]*forwarder.Forwarder, len(fwdConfs))
 		for i, fwdConf := range fwdConfs {
 			fwd := forwarder.NewForwarder(fwdConf)
 			fwds[i] = fwd
-			fwd.Run()
+			wg.Add(1)
+			fwd.Run(&wg)
 		}
+
 		for _, fwd := range fwds {
 			t.RegisterForwarder(fwd)
 		}
-		t.Run()
+
+		wg.Add(1)
+		t.Run(&wg)
 		tailerForwarderMappings[t] = fwds
 	}
 
@@ -100,4 +106,9 @@ func main() {
 			fwd.Close()
 		}
 	}
+
+	// Wait until all tailers and forwarders goroutines complete
+	wg.Wait()
+
+	// Save last read position by tailers to cache
 }
