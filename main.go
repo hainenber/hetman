@@ -11,6 +11,7 @@ import (
 
 	"github.com/hainenber/hetman/config"
 	"github.com/hainenber/hetman/forwarder"
+	"github.com/hainenber/hetman/registry"
 	"github.com/hainenber/hetman/tailer"
 	"github.com/hainenber/hetman/utils"
 )
@@ -47,7 +48,7 @@ func main() {
 	}
 
 	// Intercept termination signals like Ctrl-C
-	// Graceful shutdown and cleanup ongoing goroutines, channels
+	// Graceful shutdown and cleanup resources (goroutines and channels)
 	sigs := make(chan os.Signal, 1)
 	defer close(sigs)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
@@ -72,11 +73,17 @@ func main() {
 		}
 	}
 
+	offsetRegistry, err := registry.GetRegistry(conf.GlobalConfig.RegistryDir)
+	if err != nil {
+		logger.Error().Err(err).Msg("")
+	}
+
 	var wg sync.WaitGroup
 
 	tailerForwarderMappings := make(map[*tailer.Tailer][]*forwarder.Forwarder)
 	for file, fwdConfs := range pathForwarderConfigMappings {
-		t, err := tailer.NewTailer(file, logger)
+		existingOffset := offsetRegistry[file]
+		t, err := tailer.NewTailer(file, logger, existingOffset)
 		if err != nil {
 			logger.Fatal().Err(err).Msg("")
 		}
@@ -111,4 +118,13 @@ func main() {
 	wg.Wait()
 
 	// Save last read position by tailers to cache
+	// Prevent sending duplicate logs and resume forwarding
+	lastReadPositions := make(map[string]int64, len(tailerForwarderMappings))
+	for tailer := range tailerForwarderMappings {
+		lastReadPositions[tailer.Tailer.Filename] = tailer.Offset
+	}
+	err = registry.SaveLastPosition(conf.GlobalConfig.RegistryDir, lastReadPositions)
+	if err != nil {
+		logger.Error().Err(err).Msg("")
+	}
 }

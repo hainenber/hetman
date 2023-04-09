@@ -2,6 +2,7 @@ package tailer
 
 import (
 	"context"
+	"io"
 	"log"
 	"sync"
 
@@ -11,13 +12,15 @@ import (
 )
 
 type Tailer struct {
+	Tailer     *tail.Tail
+	Offset     int64
 	ctx        context.Context
 	cancelFunc context.CancelFunc
 	forwarders []*forwarder.Forwarder
 	logger     zerolog.Logger
 }
 
-func NewTailer(file string, logger zerolog.Logger) (*Tailer, error) {
+func NewTailer(file string, logger zerolog.Logger, offset int64) (*Tailer, error) {
 	// Logger for tailer's output
 	tailerLogger := log.New(
 		logger.With().Str("source", "tailer").Logger(),
@@ -25,9 +28,19 @@ func NewTailer(file string, logger zerolog.Logger) (*Tailer, error) {
 		log.Default().Flags(),
 	)
 
+	// Set offset to continue, if halted before
+	var location *tail.SeekInfo
+	if offset != 0 {
+		location = &tail.SeekInfo{
+			Offset: offset,
+			Whence: io.SeekStart,
+		}
+	}
+
+	// Create tailer
 	tailer, err := tail.TailFile(
 		file,
-		tail.Config{Follow: true, ReOpen: true, Logger: tailerLogger},
+		tail.Config{Follow: true, ReOpen: true, Logger: tailerLogger, Location: location},
 	)
 	if err != nil {
 		return nil, err
@@ -38,6 +51,7 @@ func NewTailer(file string, logger zerolog.Logger) (*Tailer, error) {
 	return &Tailer{
 		ctx:        ctx,
 		cancelFunc: cancelFunc,
+		Tailer:     tailer,
 		forwarders: []*forwarder.Forwarder{},
 		logger:     logger,
 	}, nil
@@ -73,4 +87,9 @@ func (t *Tailer) Run(wg *sync.WaitGroup) {
 func (t *Tailer) Close() {
 	t.cancelFunc()
 
+	offset, err := t.Tailer.Tell()
+	if err != nil {
+		t.logger.Error().Err(err).Msg("")
+	}
+	t.Offset = offset
 }
