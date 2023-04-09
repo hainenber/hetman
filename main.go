@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/rs/zerolog"
@@ -57,11 +58,15 @@ func main() {
 	pathForwarderConfigMappings := make(map[string][]config.ForwarderConfig)
 	for _, target := range conf.Targets {
 		for _, file := range target.Paths {
-			fwdConfs, ok := pathForwarderConfigMappings[file]
+			absPath, err := filepath.Abs(file)
+			if err != nil {
+				logger.Error().Err(err).Msg("")
+			}
+			fwdConfs, ok := pathForwarderConfigMappings[absPath]
 			if ok {
-				pathForwarderConfigMappings[file] = append(fwdConfs, target.Forwarders...)
+				pathForwarderConfigMappings[absPath] = append(fwdConfs, target.Forwarders...)
 			} else {
-				pathForwarderConfigMappings[file] = target.Forwarders
+				pathForwarderConfigMappings[absPath] = target.Forwarders
 			}
 		}
 	}
