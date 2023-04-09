@@ -2,11 +2,13 @@ package forwarder
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/hainenber/hetman/config"
@@ -23,23 +25,27 @@ type Payload struct {
 }
 
 type Forwarder struct {
-	done    chan struct{}
-	conf    *config.ForwarderConfig
-	LogChan chan string
-	logger  zerolog.Logger
+	ctx        context.Context
+	cancelFunc context.CancelFunc
+	conf       *config.ForwarderConfig
+	LogChan    chan string
+	logger     zerolog.Logger
 }
 
 func NewForwarder(conf config.ForwarderConfig) *Forwarder {
+	ctx, cancelFunc := context.WithCancel(context.Background())
 	return &Forwarder{
-		conf:    &conf,
-		done:    make(chan struct{}),
-		LogChan: make(chan string),
-		logger:  zerolog.New(os.Stdout),
+		ctx:        ctx,
+		cancelFunc: cancelFunc,
+		conf:       &conf,
+		LogChan:    make(chan string),
+		logger:     zerolog.New(os.Stdout),
 	}
 }
 
-func (f Forwarder) Run() {
+func (f Forwarder) Run(wg *sync.WaitGroup) {
 	go func() {
+		defer wg.Done()
 		for {
 			select {
 			case line := <-f.LogChan:
@@ -51,8 +57,7 @@ func (f Forwarder) Run() {
 						}
 					}
 				}
-			case <-f.done:
-				close(f.done)
+			case <-f.ctx.Done():
 				close(f.LogChan)
 				return
 			}
@@ -61,7 +66,7 @@ func (f Forwarder) Run() {
 }
 
 func (f Forwarder) Close() {
-	f.done <- struct{}{}
+	f.cancelFunc()
 }
 
 func (f Forwarder) Forward(url, logLine string) error {

@@ -1,10 +1,9 @@
 package tailer
 
 import (
-	"bufio"
+	"context"
 	"log"
-	"os"
-	"strings"
+	"sync"
 
 	"github.com/hainenber/hetman/forwarder"
 	"github.com/nxadm/tail"
@@ -12,8 +11,8 @@ import (
 )
 
 type Tailer struct {
-	done       chan struct{}
-	tailer     *tail.Tail
+	ctx        context.Context
+	cancelFunc context.CancelFunc
 	forwarders []*forwarder.Forwarder
 	logger     zerolog.Logger
 }
@@ -34,9 +33,11 @@ func NewTailer(file string, logger zerolog.Logger) (*Tailer, error) {
 		return nil, err
 	}
 
+	ctx, cancelFunc := context.WithCancel(context.Background())
+
 	return &Tailer{
-		done:       make(chan struct{}),
-		tailer:     tailer,
+		ctx:        ctx,
+		cancelFunc: cancelFunc,
 		forwarders: []*forwarder.Forwarder{},
 		logger:     logger,
 	}, nil
@@ -47,22 +48,21 @@ func (t *Tailer) RegisterForwarder(fwd *forwarder.Forwarder) {
 }
 
 // Remember last offset from tailed file
-func (t *Tailer) Run() {
+func (t *Tailer) Run(wg *sync.WaitGroup) {
 	go func() {
+		defer wg.Done()
 		for {
 			select {
-			case line := <-t.tailer.Lines:
+			case line := <-t.Tailer.Lines:
 				{
 					for _, fwd := range t.forwarders {
 						fwd.LogChan <- line.Text
 					}
 				}
-			case <-t.done:
+			case <-t.ctx.Done():
 				{
-					t.SaveOffset()
-					t.tailer.Stop()
-					t.tailer.Cleanup()
-					close(t.done)
+					t.Tailer.Stop()
+					t.Tailer.Cleanup()
 					return
 				}
 			}
@@ -70,7 +70,7 @@ func (t *Tailer) Run() {
 	}()
 }
 
-func (t Tailer) Close() {
-	t.done <- struct{}{}
-}
+func (t *Tailer) Close() {
+	t.cancelFunc()
+
 }
