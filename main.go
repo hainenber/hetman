@@ -3,7 +3,6 @@ package main
 import (
 	"os"
 	"os/signal"
-	"path/filepath"
 	"sync"
 	"syscall"
 
@@ -13,66 +12,38 @@ import (
 	"github.com/hainenber/hetman/forwarder"
 	"github.com/hainenber/hetman/registry"
 	"github.com/hainenber/hetman/tailer"
-	"github.com/hainenber/hetman/utils"
 )
 
 func main() {
 	logger := zerolog.New(os.Stdout)
 
-	// Read config from file
+	// Gracefully reloading configuration changes when receiving SIGHUP signal
+	reloadSigs := make(chan os.Signal, 1)
+	defer close(reloadSigs)
+	signal.Notify(reloadSigs, syscall.SIGHUP)
+
+	// Intercept termination signals like Ctrl-C
+	// Graceful shutdown and cleanup resources (goroutines and channels)
+	terminationSigs := make(chan os.Signal, 1)
+	defer close(terminationSigs)
+	signal.Notify(terminationSigs, syscall.SIGINT, syscall.SIGTERM)
+
+	// Read config from file, for the first time
 	conf, err := config.NewConfig(config.DefaultConfigPath)
 	if err != nil {
 		logger.Fatal().Err(err).Msgf("Cannot read config from %s", config.DefaultConfigPath)
 	}
 
-	// Translate wildcards into matched files
-	conf, err = conf.TranslateWildcards()
+	// Ensure Hetman's config is reloaded when receiving SIGHUP signals
+	conf.GracefulReload(reloadSigs)
+
+	// Validate and Transform config
+	pathForwarderConfigMappings, err := conf.ValidateAndTransform()
 	if err != nil {
 		logger.Fatal().Err(err).Msg("")
 	}
 
-	// Prevent duplicate ID of targets
-	err = conf.DetectDuplicateTargetID()
-	if err != nil {
-		logger.Fatal().Err(err).Msg("")
-	}
-
-	// Check if input files are readable by current user
-	for _, target := range conf.Targets {
-		errors := utils.IsReadable(target.Paths)
-		if len(errors) > 0 {
-			for _, err := range errors {
-				logger.Error().Err(err).Msg("")
-			}
-		}
-	}
-
-	// Intercept termination signals like Ctrl-C
-	// Graceful shutdown and cleanup resources (goroutines and channels)
-	sigs := make(chan os.Signal, 1)
-	defer close(sigs)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-
-	// Forward to log servers
-	// Seperate goroutine with own lifecycle
-	// 	for each target, aka separate forwarder
-	// Prevent duplicate tailers by mapping unique paths to several matching forwarders
-	pathForwarderConfigMappings := make(map[string][]config.ForwarderConfig)
-	for _, target := range conf.Targets {
-		for _, file := range target.Paths {
-			absPath, err := filepath.Abs(file)
-			if err != nil {
-				logger.Error().Err(err).Msg("")
-			}
-			fwdConfs, ok := pathForwarderConfigMappings[absPath]
-			if ok {
-				pathForwarderConfigMappings[absPath] = append(fwdConfs, target.Forwarders...)
-			} else {
-				pathForwarderConfigMappings[absPath] = target.Forwarders
-			}
-		}
-	}
-
+	// Read in registry file, if exists already
 	offsetRegistry, err := registry.GetRegistry(conf.GlobalConfig.RegistryDir)
 	if err != nil {
 		logger.Error().Err(err).Msg("")
@@ -105,8 +76,9 @@ func main() {
 		tailerForwarderMappings[t] = fwds
 	}
 
-	// Gracefully close forwarders and tailers
-	<-sigs
+	// Close tailer first, then forwarders
+	// Ensure all consumed log entries are flushed before closing
+	<-terminationSigs
 	for tailer, fwds := range tailerForwarderMappings {
 		tailer.Close()
 		for _, fwd := range fwds {

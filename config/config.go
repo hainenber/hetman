@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/hainenber/hetman/utils"
 	"github.com/knadh/koanf"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/file"
@@ -59,14 +60,14 @@ func NewConfig(configPath string) (*Config, error) {
 	return &config, nil
 }
 
-func (c *Config) TranslateWildcards() (*Config, error) {
+func (c *Config) TranslateWildcards() error {
 	for i, target := range c.Targets {
 		matchedFilepaths := make(map[string]bool)
 		translatedInputs := []string{}
 		for _, path := range target.Paths {
 			matches, err := filepath.Glob(path)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			for _, match := range matches {
 				if _, exists := matchedFilepaths[match]; !exists {
@@ -80,7 +81,7 @@ func (c *Config) TranslateWildcards() (*Config, error) {
 		c.Targets[i].Paths = translatedInputs
 	}
 
-	return c, nil
+	return nil
 }
 
 func (c Config) DetectDuplicateTargetID() error {
@@ -92,5 +93,62 @@ func (c Config) DetectDuplicateTargetID() error {
 		}
 		targetIds[target.Id] = true
 	}
+	return nil
+}
+
+// Validate and Transform config
+func (c Config) ValidateAndTransform() (map[string][]ForwarderConfig, error) {
+	// Translate wildcards into matched files
+	err := c.TranslateWildcards()
+	if err != nil {
+		return nil, err
+	}
+
+	// Prevent duplicate ID of targets
+	err = c.DetectDuplicateTargetID()
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if input files are readable by current user
+	for _, target := range c.Targets {
+		errors := utils.IsReadable(target.Paths)
+		if len(errors) > 0 {
+			return nil, errors[0]
+		}
+	}
+
+	// Ensure none of forwarder's URL are empty
+	for _, target := range c.Targets {
+		for _, fwd := range target.Forwarders {
+			if fwd.URL == "" {
+				err = fmt.Errorf("empty forwarder's URL config for target %s", target.Id)
+				return nil, err
+			}
+		}
+	}
+
+	// Convert target paths to "absolute path" format
+	// Prevent duplicate tailers by consolidating unique paths to several matching forwarders
+	pathForwarderConfigMappings := make(map[string][]ForwarderConfig)
+	for _, target := range c.Targets {
+		for _, file := range target.Paths {
+			absPath, err := filepath.Abs(file)
+			if err != nil {
+				return nil, err
+			}
+			fwdConfs, ok := pathForwarderConfigMappings[absPath]
+			if ok {
+				pathForwarderConfigMappings[absPath] = append(fwdConfs, target.Forwarders...)
+			} else {
+				pathForwarderConfigMappings[absPath] = target.Forwarders
+			}
+		}
+	}
+
+	return pathForwarderConfigMappings, nil
+}
+
+func (c *Config) GracefulReload(sigs chan<- os.Signal) error {
 	return nil
 }
