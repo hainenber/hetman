@@ -50,14 +50,13 @@ func (f Forwarder) Run(wg *sync.WaitGroup) {
 			select {
 			case line := <-f.LogChan:
 				{
-					if f.conf.URL != "" {
-						err := f.Forward(f.conf.URL, line)
-						if err != nil {
-							f.logger.Error().Err(err).Msg("")
-						}
+					err := f.Forward(f.conf.URL, line)
+					if err != nil {
+						f.logger.Error().Err(err).Msg("")
 					}
 				}
 			case <-f.ctx.Done():
+				f.Flush()
 				close(f.LogChan)
 				return
 			}
@@ -65,6 +64,18 @@ func (f Forwarder) Run(wg *sync.WaitGroup) {
 	}()
 }
 
+// Flush all consumed messages, forwarding to remote endpoints
+func (f Forwarder) Flush() {
+	for len(f.LogChan) > 0 {
+		line := <-f.LogChan
+		err := f.Forward(f.conf.URL, line)
+		if err != nil {
+			f.logger.Error().Err(err).Msg("")
+		}
+	}
+}
+
+// Call function to cancel context
 func (f Forwarder) Close() {
 	f.cancelFunc()
 }
