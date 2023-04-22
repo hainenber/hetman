@@ -18,9 +18,9 @@ func main() {
 	logger := zerolog.New(os.Stdout)
 
 	// Gracefully reloading configuration changes when receiving SIGHUP signal
-	reloadSigs := make(chan os.Signal, 1)
-	defer close(reloadSigs)
-	signal.Notify(reloadSigs, syscall.SIGHUP)
+	// reloadSigs := make(chan os.Signal, 1)
+	// defer close(reloadSigs)
+	// signal.Notify(reloadSigs, syscall.SIGHUP)
 
 	// Intercept termination signals like Ctrl-C
 	// Graceful shutdown and cleanup resources (goroutines and channels)
@@ -35,7 +35,7 @@ func main() {
 	}
 
 	// Ensure Hetman's config is reloaded when receiving SIGHUP signals
-	conf.GracefulReload(reloadSigs)
+	// conf.GracefulReload(reloadSigs)
 
 	// Validate and Transform config
 	pathForwarderConfigMappings, err := conf.ValidateAndTransform()
