@@ -67,17 +67,17 @@ func (t *Tailer) Run(wg *sync.WaitGroup) {
 		defer wg.Done()
 		for {
 			select {
-			case line := <-t.Tailer.Lines:
-				{
-					for _, fwd := range t.forwarders {
-						fwd.LogChan <- line.Text
-					}
-				}
 			case <-t.ctx.Done():
 				{
 					t.Tailer.Stop()
 					t.Tailer.Cleanup()
 					return
+				}
+			case line := <-t.Tailer.Lines:
+				{
+					for _, fwd := range t.forwarders {
+						fwd.LogChan <- line.Text
+					}
 				}
 			}
 		}
@@ -87,6 +87,7 @@ func (t *Tailer) Run(wg *sync.WaitGroup) {
 func (t *Tailer) Close() {
 	t.cancelFunc()
 
+	// Register last read position
 	offset, err := t.Tailer.Tell()
 	if err != nil {
 		t.logger.Error().Err(err).Msg("")

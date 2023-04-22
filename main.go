@@ -14,8 +14,12 @@ import (
 	"github.com/hainenber/hetman/tailer"
 )
 
+// WIP: add INFO logging for every steps during initialization
 func main() {
-	logger := zerolog.New(os.Stdout)
+	var (
+		logger  = zerolog.New(os.Stdout)
+		initLog = logger.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+	)
 
 	// Gracefully reloading configuration changes when receiving SIGHUP signal
 	// reloadSigs := make(chan os.Signal, 1)
@@ -55,17 +59,30 @@ func main() {
 
 	var wg sync.WaitGroup
 
+	// Kickstart operations for forwarders and tailers
+	// If logs were disk-persisted before, read them up for re-delivery
 	tailerForwarderMappings := make(map[*tailer.Tailer][]*forwarder.Forwarder)
 	for file, fwdConfs := range pathForwarderConfigMappings {
-		existingOffset := offsetRegistry[file]
-		t, err := tailer.NewTailer(file, logger, existingOffset)
+		var offset int64
+		existingOffset, exists := registrar.Offsets[file]
+		if exists {
+			offset = existingOffset
+		}
+		t, err := tailer.NewTailer(file, logger, offset)
 		if err != nil {
 			logger.Fatal().Err(err).Msg("")
 		}
 
 		fwds := make([]*forwarder.Forwarder, len(fwdConfs))
 		for i, fwdConf := range fwdConfs {
-			fwd := forwarder.NewForwarder(fwdConf)
+			fwd := forwarder.NewForwarder(fwdConf, conf.GlobalConfig.DiskBufferPersistence)
+
+			// If enabled, read disk-persisted logs from prior file, if exists
+			if conf.GlobalConfig.DiskBufferPersistence {
+				if bufferedPath, exists := registrar.BufferedPaths[fwd.Buffer.GetSignature()]; exists {
+					fwd.Buffer.ReadPersistedLogsIntoChan(bufferedPath)
+				}
+			}
 			fwds[i] = fwd
 			wg.Add(1)
 			fwd.Run(&wg)
@@ -93,8 +110,10 @@ func main() {
 	// Wait until all tailers and forwarders goroutines complete
 	wg.Wait()
 
-	// Save last read position by tailers to cache
-	// Prevent sending duplicate logs and resume forwarding
+	// CLEANUP/PREPARATION AFTER RECEIVING SHUTDOWN SIGNAL
+	//
+	// Save last read position by tailers to local registry
+	// Prevent sending duplicate logs and allow resuming forward new log lines
 	lastReadPositions := make(map[string]int64, len(tailerForwarderMappings))
 	for tailer := range tailerForwarderMappings {
 		lastReadPositions[tailer.Tailer.Filename] = tailer.Offset
@@ -102,5 +121,24 @@ func main() {
 	err = registry.SaveLastPosition(conf.GlobalConfig.RegistryDir, lastReadPositions)
 	if err != nil {
 		logger.Error().Err(err).Msg("")
+	}
+
+	// If enabled, persist undelivered, buffered logs to disk
+	// Map forwarder's signature with corresponding buffered filepath and save to local registry
+	if conf.GlobalConfig.DiskBufferPersistence {
+		diskBufferedFilepaths := make(map[string]string, len(tailerForwarderMappings))
+		for _, fwds := range tailerForwarderMappings {
+			for _, fwd := range fwds {
+				diskBufferedFilepath, err := fwd.Buffer.PersistToDisk()
+				if err != nil {
+					logger.Error().Err(err).Msg("")
+				}
+				diskBufferedFilepaths[fwd.Buffer.GetSignature()] = diskBufferedFilepath
+			}
+		}
+		err = registry.SaveDiskBufferedFilePaths(conf.GlobalConfig.RegistryDir, diskBufferedFilepaths)
+		if err != nil {
+			logger.Error().Err(err).Msg("")
+		}
 	}
 }
