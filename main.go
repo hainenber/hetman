@@ -33,6 +33,7 @@ func main() {
 	if err != nil {
 		logger.Fatal().Err(err).Msgf("Cannot read config from %s", config.DefaultConfigPath)
 	}
+	initLog.Info().Msgf("Finish reading config %s", config.DefaultConfigPath)
 
 	// Ensure Hetman's config is reloaded when receiving SIGHUP signals
 	// conf.GracefulReload(reloadSigs)
@@ -42,12 +43,15 @@ func main() {
 	if err != nil {
 		logger.Fatal().Err(err).Msg("")
 	}
+	initLog.Info().Msg("Finish config validation and transformation")
 
 	// Read in registry file, if exists already
-	offsetRegistry, err := registry.GetRegistry(conf.GlobalConfig.RegistryDir)
+	// If not, create an empty registrar
+	registrar, err := registry.GetRegistry(conf.GlobalConfig.RegistryDir)
 	if err != nil {
-		logger.Error().Err(err).Msg("")
+		logger.Fatal().Err(err).Msg("")
 	}
+	initLog.Info().Msgf("Registry file at %v read", conf.GlobalConfig.RegistryDir)
 
 	var wg sync.WaitGroup
 
