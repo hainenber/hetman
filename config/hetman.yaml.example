@@ -1,5 +1,6 @@
 global:
   registry_directory: /tmp
+  disk_buffer_persistence: true
 
 targets:
   - id: nginx

@@ -23,7 +23,8 @@ type TargetConfig struct {
 }
 
 type GlobalConfig struct {
-	RegistryDir string `koanf:"registry_directory"`
+	RegistryDir           string `koanf:"registry_directory"`
+	DiskBufferPersistence bool   `koanf:"disk_buffer_persistence"`
 }
 
 type Config struct {
