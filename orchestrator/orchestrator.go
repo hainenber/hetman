@@ -4,6 +4,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/hainenber/hetman/buffer"
 	"github.com/hainenber/hetman/config"
 	"github.com/hainenber/hetman/forwarder"
 	"github.com/hainenber/hetman/registry"
@@ -12,12 +13,14 @@ import (
 )
 
 type Orchestrator struct {
-	wg                      sync.WaitGroup
-	osSignalChan            chan os.Signal
-	logger                  zerolog.Logger
-	enableDiskPersistence   bool
-	registryDir             string
-	tailerForwarderMappings map[*tailer.Tailer][]*forwarder.Forwarder
+	wg                    sync.WaitGroup
+	osSignalChan          chan os.Signal
+	logger                zerolog.Logger
+	enableDiskPersistence bool
+	registryDir           string
+	tailers               []*tailer.Tailer
+	buffers               []*buffer.Buffer
+	forwarders            []*forwarder.Forwarder
 }
 
 type OrchestratorOption struct {
@@ -28,7 +31,6 @@ type OrchestratorOption struct {
 }
 
 func NewOrchestrator(options OrchestratorOption) *Orchestrator {
-
 	return &Orchestrator{
 		osSignalChan:          options.OsSignalChan,
 		logger:                options.Logger,
@@ -40,8 +42,6 @@ func NewOrchestrator(options OrchestratorOption) *Orchestrator {
 // Kickstart operations for forwarders and tailers
 // If logs were disk-persisted before, read them up for re-delivery
 func (o *Orchestrator) Run(registrar *registry.Registry, pathForwarderConfigMappings map[string][]config.ForwarderConfig) {
-	tailerForwarderMappings := make(map[*tailer.Tailer][]*forwarder.Forwarder)
-
 	for file, fwdConfs := range pathForwarderConfigMappings {
 		// Check if there's any saved offset for this file
 		var offset int64
@@ -51,37 +51,44 @@ func (o *Orchestrator) Run(registrar *registry.Registry, pathForwarderConfigMapp
 		}
 
 		// Initialize tailer with options
-		t, err := tailer.NewTailer(file, o.logger, offset)
+		t, err := tailer.NewTailer(tailer.TailerOptions{
+			File:   file,
+			Logger: o.logger,
+			Offset: offset,
+		})
 		if err != nil {
 			o.logger.Error().Err(err).Msg("")
 		}
 
-		fwds := make([]*forwarder.Forwarder, len(fwdConfs))
-
-		for i, fwdConf := range fwdConfs {
-			fwd := forwarder.NewForwarder(fwdConf, o.enableDiskPersistence)
+		// Create a buffer associative with each forwarder
+		var buffers []*buffer.Buffer
+		for _, fwdConf := range fwdConfs {
+			fwd := forwarder.NewForwarder(fwdConf)
+			fwdBuffer := buffer.NewBuffer(fwd.Signature)
 
 			// If enabled, read disk-persisted logs from prior file, if exists
 			if o.enableDiskPersistence {
-				if bufferedPath, exists := registrar.BufferedPaths[fwd.Buffer.GetSignature()]; exists {
-					fwd.Buffer.ReadPersistedLogsIntoChan(bufferedPath)
+				if bufferedPath, exists := registrar.BufferedPaths[fwdBuffer.GetSignature()]; exists {
+					fwdBuffer.LoadPersistedLogs(bufferedPath)
 				}
 			}
-			fwds[i] = fwd
+
+			buffers = append(buffers, fwdBuffer)
+			o.buffers = append(o.buffers, fwdBuffer)
+			o.forwarders = append(o.forwarders, fwd)
+
 			o.wg.Add(1)
-			fwd.Run(&o.wg)
+			fwd.Run(&o.wg, fwdBuffer.BufferChan)
+
+			o.wg.Add(1)
+			fwdBuffer.Run(&o.wg, fwd.LogChan)
 		}
 
-		for _, fwd := range fwds {
-			t.RegisterForwarder(fwd)
-		}
+		o.tailers = append(o.tailers, t)
 
 		o.wg.Add(1)
-		t.Run(&o.wg)
-		tailerForwarderMappings[t] = fwds
+		t.Run(&o.wg, buffers)
 	}
-
-	o.tailerForwarderMappings = tailerForwarderMappings
 
 	// Block until termination signal(s) receive
 	<-o.osSignalChan
@@ -96,21 +103,24 @@ func (o *Orchestrator) Run(registrar *registry.Registry, pathForwarderConfigMapp
 }
 
 func (o *Orchestrator) Close() {
-	// Close tailer first, then forwarders
+	// Close following components in order: tailer -> forwarders -> buffers
 	// Ensure all consumed log entries are flushed before closing
-	for tailer, fwds := range o.tailerForwarderMappings {
-		tailer.Close()
-		for _, fwd := range fwds {
-			fwd.Close()
-		}
+	for _, t := range o.tailers {
+		t.Close()
+	}
+	for _, f := range o.forwarders {
+		f.Close()
+	}
+	for _, b := range o.buffers {
+		b.Close()
 	}
 }
 
 func (o *Orchestrator) Cleanup() {
 	// Save last read position by tailers to local registry
 	// Prevent sending duplicate logs and allow resuming forward new log lines
-	lastReadPositions := make(map[string]int64, len(o.tailerForwarderMappings))
-	for tailer := range o.tailerForwarderMappings {
+	lastReadPositions := make(map[string]int64, len(o.tailers))
+	for _, tailer := range o.tailers {
 		lastReadPositions[tailer.Tailer.Filename] = tailer.Offset
 	}
 	err := registry.SaveLastPosition(o.registryDir, lastReadPositions)
@@ -118,18 +128,16 @@ func (o *Orchestrator) Cleanup() {
 		o.logger.Error().Err(err).Msg("")
 	}
 
-	// If enabled, persist undelivered, buffered logs to disk
+	// If enabled, persist undelivered, persist buffered logs to disk
 	// Map forwarder's signature with corresponding buffered filepath and save to local registry
 	if o.enableDiskPersistence {
-		diskBufferedFilepaths := make(map[string]string, len(o.tailerForwarderMappings))
-		for _, fwds := range o.tailerForwarderMappings {
-			for _, fwd := range fwds {
-				diskBufferedFilepath, err := fwd.Buffer.PersistToDisk()
-				if err != nil {
-					o.logger.Error().Err(err).Msg("")
-				}
-				diskBufferedFilepaths[fwd.Buffer.GetSignature()] = diskBufferedFilepath
+		diskBufferedFilepaths := make(map[string]string, len(o.buffers))
+		for _, storedBuffer := range o.buffers {
+			diskBufferedFilepath, err := storedBuffer.PersistToDisk()
+			if err != nil {
+				o.logger.Error().Err(err).Msg("")
 			}
+			diskBufferedFilepaths[storedBuffer.GetSignature()] = diskBufferedFilepath
 		}
 		err = registry.SaveDiskBufferedFilePaths(o.registryDir, diskBufferedFilepaths)
 		if err != nil {

@@ -2,23 +2,48 @@ package buffer
 
 import (
 	"bufio"
+	"context"
 	"os"
-	"strings"
+	"sync"
 )
 
 type Buffer struct {
-	BufferChan    chan []string // Channel that store un-delivered logs, waiting to be either resend or persisted to disk
-	BufferedChan  chan []string // Channel that store disk-persisted logs, waiting to be re-forwarded
-	ReforwardChan chan []string
-	signature     string // A buffer's signature, maded by hashing of forwarder's targets associative tag key-value pairs
+	ctx        context.Context    // Context for forwarder struct, primarily for cancellation when needed
+	cancelFunc context.CancelFunc // Context cancellation function
+	BufferChan chan string        // Channel that store un-delivered logs, waiting to be either resend or persisted to disk
+	signature  string             // A buffer's signature, maded by hashing of forwarder's targets associative tag key-value pairs
+
 }
 
 func NewBuffer(signature string) *Buffer {
+	ctx, cancelFunc := context.WithCancel(context.Background())
 	return &Buffer{
-		BufferChan:   make(chan []string, 1024),
-		BufferedChan: make(chan []string, 1024),
-		signature:    signature,
+		ctx:        ctx,
+		cancelFunc: cancelFunc,
+		BufferChan: make(chan string, 1024),
+		signature:  signature,
 	}
+}
+
+func (b *Buffer) Run(wg *sync.WaitGroup, fwdChan chan string) {
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-b.ctx.Done():
+				return
+			case line := <-b.BufferChan:
+				// Try sending tailed log line to forwarder's channel
+				fwdChan <- line
+			default:
+				continue
+			}
+		}
+	}()
+}
+
+func (b Buffer) Close() {
+	b.cancelFunc()
 }
 
 // GetSignature returns a buffer's signature
@@ -48,8 +73,7 @@ func (b Buffer) PersistToDisk() (string, error) {
 
 	for len(b.BufferChan) > 0 {
 		line := <-b.BufferChan
-		writtenLine := strings.Join(line, " ")
-		if _, err := f.WriteString(writtenLine); err != nil {
+		if _, err := f.WriteString(line); err != nil {
 			return "", err
 		}
 	}
@@ -57,9 +81,9 @@ func (b Buffer) PersistToDisk() (string, error) {
 	return bufferedFilename, nil
 }
 
-// ReadPersistedLogsIntoChan reads disk-persisted logs to channel for re-delivery
+// LoadPersistedLogs reads disk-persisted logs to channel for re-delivery
 // Only to be called during program startup
-func (b Buffer) ReadPersistedLogsIntoChan(filename string) error {
+func (b Buffer) LoadPersistedLogs(filename string) error {
 	bufferedFile, err := os.Open(filename)
 	if err != nil {
 		return err
@@ -71,8 +95,8 @@ func (b Buffer) ReadPersistedLogsIntoChan(filename string) error {
 
 	// Unload disk-buffered logs into channel for re-delivery
 	for fileScanner.Scan() {
-		timestamp, bufferedLine, _ := strings.Cut(fileScanner.Text(), " ")
-		b.BufferedChan <- []string{timestamp, bufferedLine}
+		bufferedLine := fileScanner.Text()
+		b.BufferChan <- bufferedLine
 	}
 
 	// Clean up previously temp file used for persistence as offloading has finished
@@ -82,9 +106,4 @@ func (b Buffer) ReadPersistedLogsIntoChan(filename string) error {
 	}
 
 	return nil
-}
-
-func (b Buffer) Close() {
-	close(b.BufferChan)
-	close(b.BufferedChan)
 }

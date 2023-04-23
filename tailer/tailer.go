@@ -6,7 +6,7 @@ import (
 	"log"
 	"sync"
 
-	"github.com/hainenber/hetman/forwarder"
+	"github.com/hainenber/hetman/buffer"
 	"github.com/nxadm/tail"
 	"github.com/rs/zerolog"
 )
@@ -16,30 +16,35 @@ type Tailer struct {
 	Offset     int64
 	ctx        context.Context
 	cancelFunc context.CancelFunc
-	forwarders []*forwarder.Forwarder
 	logger     zerolog.Logger
 }
 
-func NewTailer(file string, logger zerolog.Logger, offset int64) (*Tailer, error) {
+type TailerOptions struct {
+	File   string
+	Logger zerolog.Logger
+	Offset int64
+}
+
+func NewTailer(tailerOptions TailerOptions) (*Tailer, error) {
 	// Logger for tailer's output
 	tailerLogger := log.New(
-		logger.With().Str("source", "tailer").Logger(),
+		tailerOptions.Logger.With().Str("source", "tailer").Logger(),
 		"",
 		log.Default().Flags(),
 	)
 
 	// Set offset to continue, if halted before
 	var location *tail.SeekInfo
-	if offset != 0 {
+	if tailerOptions.Offset != 0 {
 		location = &tail.SeekInfo{
-			Offset: offset,
+			Offset: tailerOptions.Offset,
 			Whence: io.SeekStart,
 		}
 	}
 
 	// Create tailer
 	tailer, err := tail.TailFile(
-		file,
+		tailerOptions.File,
 		tail.Config{Follow: true, ReOpen: true, Logger: tailerLogger, Location: location},
 	)
 	if err != nil {
@@ -52,17 +57,12 @@ func NewTailer(file string, logger zerolog.Logger, offset int64) (*Tailer, error
 		ctx:        ctx,
 		cancelFunc: cancelFunc,
 		Tailer:     tailer,
-		forwarders: []*forwarder.Forwarder{},
-		logger:     logger,
+		logger:     tailerOptions.Logger,
 	}, nil
 }
 
-func (t *Tailer) RegisterForwarder(fwd *forwarder.Forwarder) {
-	t.forwarders = append(t.forwarders, fwd)
-}
-
 // Remember last offset from tailed file
-func (t *Tailer) Run(wg *sync.WaitGroup) {
+func (t *Tailer) Run(wg *sync.WaitGroup, buffers []*buffer.Buffer) {
 	go func() {
 		defer wg.Done()
 		for {
@@ -75,8 +75,8 @@ func (t *Tailer) Run(wg *sync.WaitGroup) {
 				}
 			case line := <-t.Tailer.Lines:
 				{
-					for _, fwd := range t.forwarders {
-						fwd.LogChan <- line.Text
+					for _, b := range buffers {
+						b.BufferChan <- line.Text
 					}
 				}
 			}

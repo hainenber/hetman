@@ -13,6 +13,7 @@ const (
 type Registry struct {
 	Offsets       map[string]int64
 	BufferedPaths map[string]string
+	regPath       string
 }
 
 func GetRegistry(regDir string) (*Registry, error) {
@@ -22,6 +23,7 @@ func GetRegistry(regDir string) (*Registry, error) {
 	registry := &Registry{
 		Offsets:       make(map[string]int64),
 		BufferedPaths: make(map[string]string),
+		regPath:       regPath,
 	}
 	if _, err := os.Stat(regPath); !os.IsNotExist(err) {
 		registryFile, err := os.ReadFile(regPath)
@@ -48,15 +50,18 @@ func GetRegistry(regDir string) (*Registry, error) {
 	return registry, nil
 }
 
-func (registrar *Registry) UpdateRegistry(regDir string) error {
-	regPath := path.Join(regDir, REGISTRY_FILENAME)
+func (r Registry) GetFilepath() string {
+	return r.regPath
+}
+
+func (r *Registry) UpdateRegistry(regDir string) error {
 
 	// Write back to registry
-	newRegistrar, err := json.MarshalIndent(registrar, "", "  ")
+	newRegistrar, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err = os.WriteFile(regPath, newRegistrar, 0644); err != nil {
+	if err = os.WriteFile(r.regPath, newRegistrar, 0644); err != nil {
 		return err
 	}
 

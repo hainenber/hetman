@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hainenber/hetman/buffer"
 	"github.com/hainenber/hetman/config"
 	"github.com/rs/zerolog"
 )
@@ -28,17 +27,16 @@ type Payload struct {
 }
 
 type Forwarder struct {
-	ctx                   context.Context    // Context for forwarder struct, primarily for cancellation when needed
-	cancelFunc            context.CancelFunc // Context cancellation function
-	conf                  *config.ForwarderConfig
-	LogChan               chan string
-	Buffer                *buffer.Buffer
-	logger                zerolog.Logger
-	enableDiskPersistence bool
+	ctx        context.Context         // Context for forwarder struct, primarily for cancellation when needed
+	cancelFunc context.CancelFunc      // Context cancellation function
+	conf       *config.ForwarderConfig // Forwarder's config
+	LogChan    chan string             // Channel to receive logs from buffer stage
+	Signature  string
+	logger     zerolog.Logger
 }
 
 // Create signature for a forwarder by hashing its configuration values along with ordered tag key-values
-func CreatedForwarderSignature(conf config.ForwarderConfig) string {
+func CreateForwarderSignature(conf config.ForwarderConfig) string {
 	var (
 		tagKeys      []string
 		tagValues    []string
@@ -61,67 +59,41 @@ func CreatedForwarderSignature(conf config.ForwarderConfig) string {
 	)
 }
 
-func NewForwarder(conf config.ForwarderConfig, diskBufferedPersistence bool) *Forwarder {
+func NewForwarder(conf config.ForwarderConfig) *Forwarder {
 	ctx, cancelFunc := context.WithCancel(context.Background())
 
-	signature := CreatedForwarderSignature(conf)
-
-	fwd := &Forwarder{
-		ctx:                   ctx,
-		cancelFunc:            cancelFunc,
-		conf:                  &conf,
-		LogChan:               make(chan string),
-		Buffer:                buffer.NewBuffer(signature),
-		logger:                zerolog.New(os.Stdout),
-		enableDiskPersistence: diskBufferedPersistence,
+	return &Forwarder{
+		ctx:        ctx,
+		cancelFunc: cancelFunc,
+		conf:       &conf,
+		LogChan:    make(chan string),
+		logger:     zerolog.New(os.Stdout),
+		Signature:  CreateForwarderSignature(conf),
 	}
-
-	return fwd
 }
 
-func (f Forwarder) Run(wg *sync.WaitGroup) {
-	// Sending tailed or disk-buffered logs to remote endpoints
-	// Terminates once context is cancelled
+// Run sends tailed or disk-buffered logs to remote endpoints
+// Terminates once context is cancelled
+func (f Forwarder) Run(wg *sync.WaitGroup, bufferChan chan string) {
 	go func() {
 		defer wg.Done()
 		for {
 			select {
 			case <-f.ctx.Done():
 				{
-					f.Flush()
-					f.Buffer.Close()
-					close(f.LogChan)
+					f.Flush() // Last attempt sending all consumed logs to downstream before shutdown
 					return
 				}
-			// Send read logs from tailed files
+			// Send disk-buffered logs
+			// If failed, will buffer logs back to channel for next persistence
 			case line := <-f.LogChan:
 				{
 					err := f.Forward("", line)
 					if err != nil {
 						f.logger.Error().Err(err).Msg("")
+						bufferChan <- line
 					}
 				}
-			// Send disk-buffered logs
-			// If failed, will buffer logs back to channel for next persistence
-			case line := <-f.Buffer.BufferedChan:
-				{
-					err := f.Forward(line[0], line[1])
-					if err != nil {
-						f.logger.Error().Err(err).Msg("")
-					}
-				}
-			// Continuously resend previously un-delivered logs
-			// TODO: Add exponential backoff to lessen load to upstream
-			case line := <-f.Buffer.BufferChan:
-				{
-					err := f.Forward(line[0], line[1])
-					if err != nil {
-						f.logger.Error().Err(err).Msg("")
-					}
-				}
-			// Prevent blocking
-			default:
-				continue
 			}
 		}
 	}()
@@ -180,13 +152,6 @@ func (f Forwarder) Forward(timestamp, logLine string) error {
 	resp, err := client.Do(req)
 	if err == nil && resp.StatusCode != 204 {
 		err = errors.New("unexpected status code from log server")
-	}
-
-	// If enabled, send undelivered logs to buffer channel for disk persistence
-	if f.enableDiskPersistence {
-		if err != nil {
-			f.Buffer.BufferChan <- logAndTimestamp
-		}
 	}
 
 	return err
