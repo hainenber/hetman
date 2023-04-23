@@ -8,3 +8,6 @@ lint:
 
 run:
 	go run ./...
+
+kill:
+	ps aux | grep "go run" | grep -v grep | awk '{ print $2 }' | xargs kill
