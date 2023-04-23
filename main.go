@@ -3,18 +3,15 @@ package main
 import (
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 
 	"github.com/rs/zerolog"
 
 	"github.com/hainenber/hetman/config"
-	"github.com/hainenber/hetman/forwarder"
+	"github.com/hainenber/hetman/orchestrator"
 	"github.com/hainenber/hetman/registry"
-	"github.com/hainenber/hetman/tailer"
 )
 
-// WIP: add INFO logging for every steps during initialization
 func main() {
 	var (
 		logger  = zerolog.New(os.Stdout)
@@ -55,90 +52,23 @@ func main() {
 	if err != nil {
 		logger.Fatal().Err(err).Msg("")
 	}
-	initLog.Info().Msgf("Registry file at %v read", conf.GlobalConfig.RegistryDir)
+	initLog.Info().Msgf("Finish loading registry file at %v ", registrar.GetFilepath())
 
-	var wg sync.WaitGroup
+	// Orchestrate operations for components
+	mainOrchestrator := orchestrator.NewOrchestrator(
+		orchestrator.OrchestratorOption{
+			OsSignalChan:          terminationSigs,
+			Logger:                logger,
+			EnableDiskPersistence: conf.GlobalConfig.DiskBufferPersistence,
+			RegistryDir:           conf.GlobalConfig.RegistryDir,
+		},
+	)
+	// Kickstart running of Hetman's components
+	// This will block main goroutine until termination signal from OS is received
+	initLog.Info().Msgf("Running tailers")
+	initLog.Info().Msgf("Running forwarders")
+	mainOrchestrator.Run(registrar, pathForwarderConfigMappings)
 
-	// Kickstart operations for forwarders and tailers
-	// If logs were disk-persisted before, read them up for re-delivery
-	tailerForwarderMappings := make(map[*tailer.Tailer][]*forwarder.Forwarder)
-	for file, fwdConfs := range pathForwarderConfigMappings {
-		var offset int64
-		existingOffset, exists := registrar.Offsets[file]
-		if exists {
-			offset = existingOffset
-		}
-		t, err := tailer.NewTailer(file, logger, offset)
-		if err != nil {
-			logger.Fatal().Err(err).Msg("")
-		}
-
-		fwds := make([]*forwarder.Forwarder, len(fwdConfs))
-		for i, fwdConf := range fwdConfs {
-			fwd := forwarder.NewForwarder(fwdConf, conf.GlobalConfig.DiskBufferPersistence)
-
-			// If enabled, read disk-persisted logs from prior file, if exists
-			if conf.GlobalConfig.DiskBufferPersistence {
-				if bufferedPath, exists := registrar.BufferedPaths[fwd.Buffer.GetSignature()]; exists {
-					fwd.Buffer.ReadPersistedLogsIntoChan(bufferedPath)
-				}
-			}
-			fwds[i] = fwd
-			wg.Add(1)
-			fwd.Run(&wg)
-		}
-
-		for _, fwd := range fwds {
-			t.RegisterForwarder(fwd)
-		}
-
-		wg.Add(1)
-		t.Run(&wg)
-		tailerForwarderMappings[t] = fwds
-	}
-
-	// Close tailer first, then forwarders
-	// Ensure all consumed log entries are flushed before closing
-	<-terminationSigs
-	for tailer, fwds := range tailerForwarderMappings {
-		tailer.Close()
-		for _, fwd := range fwds {
-			fwd.Close()
-		}
-	}
-
-	// Wait until all tailers and forwarders goroutines complete
-	wg.Wait()
-
-	// CLEANUP/PREPARATION AFTER RECEIVING SHUTDOWN SIGNAL
-	//
-	// Save last read position by tailers to local registry
-	// Prevent sending duplicate logs and allow resuming forward new log lines
-	lastReadPositions := make(map[string]int64, len(tailerForwarderMappings))
-	for tailer := range tailerForwarderMappings {
-		lastReadPositions[tailer.Tailer.Filename] = tailer.Offset
-	}
-	err = registry.SaveLastPosition(conf.GlobalConfig.RegistryDir, lastReadPositions)
-	if err != nil {
-		logger.Error().Err(err).Msg("")
-	}
-
-	// If enabled, persist undelivered, buffered logs to disk
-	// Map forwarder's signature with corresponding buffered filepath and save to local registry
-	if conf.GlobalConfig.DiskBufferPersistence {
-		diskBufferedFilepaths := make(map[string]string, len(tailerForwarderMappings))
-		for _, fwds := range tailerForwarderMappings {
-			for _, fwd := range fwds {
-				diskBufferedFilepath, err := fwd.Buffer.PersistToDisk()
-				if err != nil {
-					logger.Error().Err(err).Msg("")
-				}
-				diskBufferedFilepaths[fwd.Buffer.GetSignature()] = diskBufferedFilepath
-			}
-		}
-		err = registry.SaveDiskBufferedFilePaths(conf.GlobalConfig.RegistryDir, diskBufferedFilepaths)
-		if err != nil {
-			logger.Error().Err(err).Msg("")
-		}
-	}
+	// Perform cleanup post-shutdown
+	defer mainOrchestrator.Cleanup()
 }
