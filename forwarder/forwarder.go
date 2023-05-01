@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -150,8 +149,8 @@ func (f Forwarder) Forward(timestamp, logLine string) error {
 	req.Header.Add("Content-Type", "application/json")
 
 	resp, err := client.Do(req)
-	if err == nil && resp.StatusCode != 204 {
-		err = errors.New("unexpected status code from log server")
+	if err == nil && resp.StatusCode >= 400 {
+		err = fmt.Errorf("unexpected status code from log server: %v", resp.StatusCode)
 	}
 
 	return err
