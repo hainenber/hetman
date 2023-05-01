@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/knadh/koanf"
 	"github.com/knadh/koanf/parsers/yaml"
@@ -11,8 +13,9 @@ import (
 )
 
 type ForwarderConfig struct {
-	URL     string            `koanf:"url"`
-	AddTags map[string]string `koanf:"add_tags"`
+	URL       string            `koanf:"url"`
+	AddTags   map[string]string `koanf:"add_tags"`
+	signature string
 }
 
 type TargetConfig struct {
@@ -60,30 +63,7 @@ func NewConfig(configPath string) (*Config, error) {
 	return &config, nil
 }
 
-func (c *Config) TranslateWildcards() error {
-	for i, target := range c.Targets {
-		matchedFilepaths := make(map[string]bool)
-		translatedInputs := []string{}
-		for _, path := range target.Paths {
-			matches, err := filepath.Glob(path)
-			if err != nil {
-				return err
-			}
-			for _, match := range matches {
-				if _, exists := matchedFilepaths[match]; !exists {
-					matchedFilepaths[match] = true
-				}
-			}
-		}
-		for file := range matchedFilepaths {
-			translatedInputs = append(translatedInputs, file)
-		}
-		c.Targets[i].Paths = translatedInputs
-	}
-
-	return nil
-}
-
+// DetectDuplicateTargetID ensures targets's ID are unique amongst them
 func (c Config) DetectDuplicateTargetID() error {
 	targetIds := make(map[string]bool, len(c.Targets))
 	for _, target := range c.Targets {
@@ -96,29 +76,23 @@ func (c Config) DetectDuplicateTargetID() error {
 	return nil
 }
 
-// Validate and Transform config
-func (c Config) ValidateAndTransform() (map[string][]ForwarderConfig, error) {
-	// Translate wildcards into matched files
-	err := c.TranslateWildcards()
-	if err != nil {
-		return nil, err
-	}
-
+// Process performs baseline config check and generate path-to-forwarder map
+func (c Config) Process() (map[string][]ForwarderConfig, error) {
 	// Prevent duplicate ID of targets
-	err = c.DetectDuplicateTargetID()
+	err := c.DetectDuplicateTargetID()
 	if err != nil {
 		return nil, err
 	}
 
-	// Check if input files are readable by current user
-	for _, target := range c.Targets {
-		for _, filepath := range target.Paths {
-			_, err := os.Open(filepath)
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
+	// Check if target paths are readable by current user
+	// for _, target := range c.Targets {
+	// 	for _, filepath := range target.Paths {
+	// 		_, err := os.Open(filepath)
+	// 		if err != nil {
+	// 			return nil, err
+	// 		}
+	// 	}
+	// }
 
 	// Ensure none of forwarder's URL are empty
 	for _, target := range c.Targets {
@@ -131,26 +105,48 @@ func (c Config) ValidateAndTransform() (map[string][]ForwarderConfig, error) {
 	}
 
 	// Convert target paths to "absolute path" format
-	// Prevent duplicate tailers by consolidating unique paths to several matching forwarders
-	pathForwarderConfigMappings := make(map[string][]ForwarderConfig)
+	// Consolidating unique paths to several matching forwarders
+	// to prevent duplicate tailers
+	pathToForwarderMap := make(map[string][]ForwarderConfig)
 	for _, target := range c.Targets {
 		for _, file := range target.Paths {
 			absPath, err := filepath.Abs(file)
 			if err != nil {
 				return nil, err
 			}
-			fwdConfs, ok := pathForwarderConfigMappings[absPath]
+			fwdConfs, ok := pathToForwarderMap[absPath]
 			if ok {
-				pathForwarderConfigMappings[absPath] = append(fwdConfs, target.Forwarders...)
+				pathToForwarderMap[absPath] = append(fwdConfs, target.Forwarders...)
 			} else {
-				pathForwarderConfigMappings[absPath] = target.Forwarders
+				pathToForwarderMap[absPath] = target.Forwarders
 			}
 		}
 	}
 
-	return pathForwarderConfigMappings, nil
+	return pathToForwarderMap, nil
 }
 
-func (c *Config) GracefulReload(sigs chan<- os.Signal) error {
-	return nil
+// Create signature for a forwarder by hashing its configuration values along with ordered tag key-values
+func (conf *ForwarderConfig) CreateForwarderSignature() string {
+	var (
+		tagKeys      []string
+		tagValues    []string
+		fwdConfParts []string
+	)
+
+	// Ensure tag key-value pairs are ordered
+	for k, v := range conf.AddTags {
+		tagKeys = append(tagKeys, k)
+		tagValues = append(tagValues, v)
+	}
+	sort.Strings(tagKeys)
+	sort.Strings(tagValues)
+
+	fwdConfParts = append(fwdConfParts, conf.URL)
+	fwdConfParts = append(fwdConfParts, tagKeys...)
+	fwdConfParts = append(fwdConfParts, tagValues...)
+
+	return fmt.Sprintf("%x",
+		[]byte(strings.Join(fwdConfParts, "")),
+	)
 }

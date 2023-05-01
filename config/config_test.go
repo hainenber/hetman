@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func prepareTestConfig() (*Config, []string) {
@@ -36,15 +38,8 @@ func TestNewConfig(t *testing.T) {
 		t.Errorf("expect nil, got %v", err)
 	}
 
-	if len(conf.Targets) != 1 {
-		t.Errorf("expect 1 target, got %v target", len(conf.Targets))
-	}
-
-	regPath := conf.GlobalConfig.RegistryDir
-	expectedRegPath := "/tmp"
-	if regPath != expectedRegPath {
-		t.Errorf("expect %s, got %s", regPath, expectedRegPath)
-	}
+	assert.Equal(t, 2, len(conf.Targets))
+	assert.Equal(t, "/tmp", conf.GlobalConfig.RegistryDir)
 
 	addedTags := conf.Targets[0].Forwarders[0].AddTags
 	expectedAddedTags := map[string]string{"label": "hetman", "source": "nginx", "dest": "loki"}
@@ -60,22 +55,22 @@ func TestNewConfig(t *testing.T) {
 	}
 }
 
-func TestTranslateWildcards(t *testing.T) {
-	conf, fnames := prepareTestConfig()
+// func TestTranslateWildcards(t *testing.T) {
+// 	conf, fnames := prepareTestConfig()
 
-	err := conf.TranslateWildcards()
-	if err != nil {
-		t.Errorf("expect nil, got %v", err)
-	}
+// 	_, err := conf.TranslateWildcards()
+// 	if err != nil {
+// 		t.Errorf("expect nil, got %v", err)
+// 	}
 
-	for _, target := range conf.Targets {
-		for _, path := range target.Paths {
-			if path != fnames[0] && path != fnames[1] {
-				t.Errorf("expect %v or %v, got %v", fnames[0], fnames[1], path)
-			}
-		}
-	}
-}
+// 	for _, target := range conf.Targets {
+// 		for _, path := range target.Paths {
+// 			if path != fnames[0] && path != fnames[1] {
+// 				t.Errorf("expect %v or %v, got %v", fnames[0], fnames[1], path)
+// 			}
+// 		}
+// 	}
+// }
 
 func TestDetectDuplicateTargetID(t *testing.T) {
 	conf := &Config{
@@ -95,10 +90,18 @@ func TestDetectDuplicateTargetID(t *testing.T) {
 	}
 }
 
-func TestTransformAndValidate(t *testing.T) {
+func TestProcess(t *testing.T) {
 	conf, _ := prepareTestConfig()
-	_, err := conf.ValidateAndTransform()
+	_, err := conf.Process()
 	if err != nil {
 		t.Errorf("expect nil, got %v", err)
 	}
+}
+
+func TestCreateForwarderSignature(t *testing.T) {
+	fwdCfg := ForwarderConfig{
+		URL:     "http://localhost:8088",
+		AddTags: map[string]string{"a": "b", "foo": "bar"},
+	}
+	assert.Equal(t, "687474703a2f2f6c6f63616c686f73743a3830383861666f6f62626172", fwdCfg.CreateForwarderSignature())
 }

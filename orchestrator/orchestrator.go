@@ -2,14 +2,17 @@ package orchestrator
 
 import (
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/hainenber/hetman/buffer"
 	"github.com/hainenber/hetman/config"
 	"github.com/hainenber/hetman/forwarder"
+	"github.com/hainenber/hetman/input"
 	"github.com/hainenber/hetman/registry"
 	"github.com/hainenber/hetman/tailer"
 	"github.com/rs/zerolog"
+	"github.com/samber/lo"
 )
 
 type Orchestrator struct {
@@ -39,20 +42,68 @@ func NewOrchestrator(options OrchestratorOption) *Orchestrator {
 	}
 }
 
+type InputToForwarderMap map[string][]config.ForwarderConfig
+
+// processPathToForwarderMap process input-to-forwarder map to prevent duplicated tailers and forwarders
+func processPathToForwarderMap(inputToForwarderMap InputToForwarderMap) (InputToForwarderMap, error) {
+	result := make(InputToForwarderMap)
+
+	for target, fwdConfs := range inputToForwarderMap {
+		translatedPaths, err := filepath.Glob(target)
+		if err != nil {
+			return nil, err
+		}
+		for _, translatedPath := range translatedPaths {
+			existingFwdConfs, ok := result[translatedPath]
+			if ok {
+				result[translatedPath] = append(existingFwdConfs, fwdConfs...)
+			} else {
+				result[translatedPath] = fwdConfs
+			}
+		}
+	}
+
+	for translatedPath, fwdConfs := range result {
+		result[translatedPath] = lo.UniqBy(fwdConfs, func(fc config.ForwarderConfig) string {
+			return fc.CreateForwarderSignature()
+		})
+	}
+
+	return result, nil
+}
+
 // Kickstart operations for forwarders and tailers
 // If logs were disk-persisted before, read them up for re-delivery
-func (o *Orchestrator) Run(registrar *registry.Registry, pathForwarderConfigMappings map[string][]config.ForwarderConfig) {
-	for file, fwdConfs := range pathForwarderConfigMappings {
+func (o *Orchestrator) Run(registrar *registry.Registry, pathToForwarderMap InputToForwarderMap) {
+	// Initialize input from filepath
+	for path, _ := range pathToForwarderMap {
+		i, err := input.NewInput(input.InputOptions{
+			Logger: o.logger,
+			Path:   path,
+		})
+		if err != nil {
+			o.logger.Fatal().Err(err).Msg("")
+		}
+		defer i.Close()
+	}
+
+	processedPathToForwarderMap, err := processPathToForwarderMap(pathToForwarderMap)
+	if err != nil {
+		o.logger.Fatal().Err(err).Msg("")
+	}
+
+	for translatedPath, fwdConfs := range processedPathToForwarderMap {
+		// Execute tailer->buffer->forwarder workflow
 		// Check if there's any saved offset for this file
 		var offset int64
-		existingOffset, exists := registrar.Offsets[file]
+		existingOffset, exists := registrar.Offsets[translatedPath]
 		if exists {
 			offset = existingOffset
 		}
 
 		// Initialize tailer with options
 		t, err := tailer.NewTailer(tailer.TailerOptions{
-			File:   file,
+			File:   translatedPath,
 			Logger: o.logger,
 			Offset: offset,
 		})
@@ -82,10 +133,10 @@ func (o *Orchestrator) Run(registrar *registry.Registry, pathForwarderConfigMapp
 
 			o.wg.Add(1)
 			fwdBuffer.Run(&o.wg, fwd.LogChan)
+
 		}
 
 		o.tailers = append(o.tailers, t)
-
 		o.wg.Add(1)
 		t.Run(&o.wg, buffers)
 	}

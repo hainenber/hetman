@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -34,30 +32,6 @@ type Forwarder struct {
 	logger     zerolog.Logger
 }
 
-// Create signature for a forwarder by hashing its configuration values along with ordered tag key-values
-func CreateForwarderSignature(conf config.ForwarderConfig) string {
-	var (
-		tagKeys      []string
-		tagValues    []string
-		fwdConfParts []string
-	)
-
-	for k, v := range conf.AddTags {
-		tagKeys = append(tagKeys, k)
-		tagValues = append(tagValues, v)
-	}
-	sort.Strings(tagKeys)
-	sort.Strings(tagValues)
-
-	fwdConfParts = append(fwdConfParts, conf.URL)
-	fwdConfParts = append(fwdConfParts, tagKeys...)
-	fwdConfParts = append(fwdConfParts, tagValues...)
-
-	return fmt.Sprintf("%x",
-		[]byte(strings.Join(fwdConfParts, "")),
-	)
-}
-
 func NewForwarder(conf config.ForwarderConfig) *Forwarder {
 	ctx, cancelFunc := context.WithCancel(context.Background())
 
@@ -67,7 +41,7 @@ func NewForwarder(conf config.ForwarderConfig) *Forwarder {
 		conf:       &conf,
 		LogChan:    make(chan string),
 		logger:     zerolog.New(os.Stdout),
-		Signature:  CreateForwarderSignature(conf),
+		Signature:  conf.CreateForwarderSignature(),
 	}
 }
 
@@ -80,7 +54,10 @@ func (f Forwarder) Run(wg *sync.WaitGroup, bufferChan chan string) {
 			select {
 			case <-f.ctx.Done():
 				{
-					f.Flush() // Last attempt sending all consumed logs to downstream before shutdown
+					err := f.Flush() // Last attempt sending all consumed logs to downstream before shutdown
+					if err != nil {
+						f.logger.Error().Err(err).Msg("")
+					}
 					return
 				}
 			// Send disk-buffered logs
@@ -99,14 +76,15 @@ func (f Forwarder) Run(wg *sync.WaitGroup, bufferChan chan string) {
 }
 
 // Flush all consumed messages, forwarding to remote endpoints
-func (f Forwarder) Flush() {
+func (f Forwarder) Flush() error {
 	for len(f.LogChan) > 0 {
 		line := <-f.LogChan
 		err := f.Forward("", line)
 		if err != nil {
-			f.logger.Error().Err(err).Msg("")
+			return err
 		}
 	}
+	return nil
 }
 
 // Call function to cancel context

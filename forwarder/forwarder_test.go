@@ -28,14 +28,6 @@ func TestNewForwarder(t *testing.T) {
 	assert.Equal(t, "687474703a2f2f6c6f63616c686f73743a38303838666f6f626172", fwd.Signature)
 }
 
-func TestCreateForwarderSignature(t *testing.T) {
-	fwdCfg := config.ForwarderConfig{
-		URL:     "http://localhost:8088",
-		AddTags: map[string]string{"a": "b", "foo": "bar"},
-	}
-	assert.Equal(t, "687474703a2f2f6c6f63616c686f73743a3830383861666f6f62626172", CreateForwarderSignature(fwdCfg))
-}
-
 func TestForwarderFlush(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "")

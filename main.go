@@ -32,15 +32,13 @@ func main() {
 	}
 	initLog.Info().Msgf("Finish reading config %s", config.DefaultConfigPath)
 
-	// Ensure Hetman's config is reloaded when receiving SIGHUP signals
-	// conf.GracefulReload(reloadSigs)
-
-	// Validate and Transform config
-	pathForwarderConfigMappings, err := conf.ValidateAndTransform()
+	// Get path-to-forwarder map from validated config
+	// This will be foundational in later input generation
+	pathToForwarderMap, err := conf.Process()
 	if err != nil {
 		logger.Fatal().Err(err).Msg("")
 	}
-	initLog.Info().Msg("Finish config validation and transformation")
+	initLog.Info().Msg("Finish processing config")
 
 	// Read in registry file, if exists already
 	// If not, create an empty registrar
@@ -63,7 +61,7 @@ func main() {
 	// This will block main goroutine until termination signal from OS is received
 	initLog.Info().Msgf("Running tailers")
 	initLog.Info().Msgf("Running forwarders")
-	mainOrchestrator.Run(registrar, pathForwarderConfigMappings)
+	mainOrchestrator.Run(registrar, pathToForwarderMap)
 
 	// Perform cleanup post-shutdown
 	defer mainOrchestrator.Cleanup()
