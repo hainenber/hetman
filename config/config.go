@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/hainenber/hetman/utils"
 	"github.com/knadh/koanf"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/file"
@@ -113,9 +112,11 @@ func (c Config) ValidateAndTransform() (map[string][]ForwarderConfig, error) {
 
 	// Check if input files are readable by current user
 	for _, target := range c.Targets {
-		errors := utils.IsReadable(target.Paths)
-		if len(errors) > 0 {
-			return nil, errors[0]
+		for _, filepath := range target.Paths {
+			_, err := os.Open(filepath)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
