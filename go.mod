@@ -5,15 +5,15 @@ go 1.19
 replace github.com/hainenber/hetman => ./
 
 require (
+	github.com/fsnotify/fsnotify v1.6.0
 	github.com/knadh/koanf v1.5.0
 	github.com/nxadm/tail v1.4.8
 	github.com/rs/zerolog v1.29.1
-	github.com/stretchr/testify v1.7.0
+	github.com/stretchr/testify v1.8.2
 )
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/fsnotify/fsnotify v1.6.0 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.18 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
