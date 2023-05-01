@@ -5,11 +5,21 @@ global:
 targets:
   - id: nginx
     paths:
-      - testdata/nginx.log 
-      - testdata/*.log 
+      - testdata/nginx/nginx.log 
+      - testdata/nginx/*.log 
     forwarders:
       - url: http://localhost:3100/loki/api/v1/push
         add_tags:
           label: hetman
           source: nginx
+          dest: loki
+  - id: misc
+    paths:
+      - testdata/syslog/*.log
+      - testdata/nginx/*.log
+    forwarders:
+      - url: http://localhost:3100/loki/api/v1/push
+        add_tags:
+          label: hetman
+          source: misc
           dest: loki
