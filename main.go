@@ -6,6 +6,7 @@ import (
 	"syscall"
 
 	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 
 	"github.com/hainenber/hetman/config"
 	"github.com/hainenber/hetman/orchestrator"
@@ -15,13 +16,8 @@ import (
 func main() {
 	var (
 		logger  = zerolog.New(os.Stdout)
-		initLog = logger.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+		initLog = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 	)
-
-	// Gracefully reloading configuration changes when receiving SIGHUP signal
-	// reloadSigs := make(chan os.Signal, 1)
-	// defer close(reloadSigs)
-	// signal.Notify(reloadSigs, syscall.SIGHUP)
 
 	// Intercept termination signals like Ctrl-C
 	// Graceful shutdown and cleanup resources (goroutines and channels)
