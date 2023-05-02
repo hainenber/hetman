@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path"
+	"path/filepath"
 )
 
 const (
@@ -50,7 +51,11 @@ func GetRegistry(regDir string) (*Registry, error) {
 	return registry, nil
 }
 
-func (r Registry) GetFilepath() string {
+func (r Registry) GetRegistryDirPath() string {
+	return filepath.Dir(r.regPath)
+}
+
+func (r Registry) GetRegistryPath() string {
 	return r.regPath
 }
 
