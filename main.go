@@ -46,7 +46,7 @@ func main() {
 	if err != nil {
 		logger.Fatal().Err(err).Msg("")
 	}
-	initLog.Info().Msgf("Finish loading registry file at %v ", registrar.GetFilepath())
+	initLog.Info().Msgf("Finish loading registry file at %v ", registrar.GetRegistryPath())
 
 	// Orchestrate operations for components
 	mainOrchestrator := orchestrator.NewOrchestrator(
@@ -54,14 +54,14 @@ func main() {
 			OsSignalChan:          terminationSigs,
 			Logger:                logger,
 			EnableDiskPersistence: conf.GlobalConfig.DiskBufferPersistence,
-			RegistryDir:           conf.GlobalConfig.RegistryDir,
+			Registrar:             registrar,
 		},
 	)
 	// Kickstart running of Hetman's components
 	// This will block main goroutine until termination signal from OS is received
 	initLog.Info().Msgf("Running tailers")
 	initLog.Info().Msgf("Running forwarders")
-	mainOrchestrator.Run(registrar, pathToForwarderMap)
+	mainOrchestrator.Run(pathToForwarderMap)
 
 	// Perform cleanup post-shutdown
 	defer mainOrchestrator.Cleanup()
