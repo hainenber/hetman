@@ -13,9 +13,8 @@ import (
 )
 
 type ForwarderConfig struct {
-	URL       string            `koanf:"url"`
-	AddTags   map[string]string `koanf:"add_tags"`
-	signature string
+	URL     string            `koanf:"url"`
+	AddTags map[string]string `koanf:"add_tags"`
 }
 
 type TargetConfig struct {
@@ -85,14 +84,22 @@ func (c Config) Process() (map[string][]ForwarderConfig, error) {
 	}
 
 	// Check if target paths are readable by current user
-	// for _, target := range c.Targets {
-	// 	for _, filepath := range target.Paths {
-	// 		_, err := os.Open(filepath)
-	// 		if err != nil {
-	// 			return nil, err
-	// 		}
-	// 	}
-	// }
+	// If encounter glob paths, check if base directory readable
+	for _, target := range c.Targets {
+		for _, targetPath := range target.Paths {
+			if strings.Contains(targetPath, "*") {
+				_, err := os.ReadDir(filepath.Dir(targetPath))
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				_, err := os.Open(targetPath)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
 
 	// Ensure none of forwarder's URL are empty
 	for _, target := range c.Targets {
@@ -126,7 +133,7 @@ func (c Config) Process() (map[string][]ForwarderConfig, error) {
 	return pathToForwarderMap, nil
 }
 
-// Create signature for a forwarder by hashing its configuration values along with ordered tag key-values
+// CreateForwarderSignature generates signature for a forwarder by hashing its configuration values along with ordered tag key-values
 func (conf *ForwarderConfig) CreateForwarderSignature() string {
 	var (
 		tagKeys      []string
