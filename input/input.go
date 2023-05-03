@@ -2,21 +2,30 @@ package input
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/hainenber/hetman/tailer"
 	"github.com/rs/zerolog"
 )
 
+type RenameEvent struct {
+	Filepath         string
+	LastReadPosition int64
+}
+
 type Input struct {
+	mu         sync.Mutex
 	ctx        context.Context
 	cancelFunc context.CancelFunc
 	watcher    *fsnotify.Watcher
 	logger     zerolog.Logger
-	InputChan  chan string
-	path       string
+	InputChan  chan RenameEvent // Channel to store name of newly created file
+	tailers    []*tailer.Tailer // Registered tailers, associated with this input. Created for files matched configured glob pattern
+	path       string           // Originally configured glob pattern
 }
 
 type InputOptions struct {
@@ -32,7 +41,7 @@ func NewInput(opts InputOptions) (*Input, error) {
 		cancelFunc: cancelFunc,
 		logger:     opts.Logger,
 		path:       opts.Path,
-		InputChan:  make(chan string),
+		InputChan:  make(chan RenameEvent),
 	}
 
 	// Only create watcher and adding paths when wildcard symbol is detected
@@ -51,22 +60,19 @@ func NewInput(opts InputOptions) (*Input, error) {
 	return i, nil
 }
 
-func (i Input) Close() {
+func (i *Input) Close() {
 	i.cancelFunc()
 }
 
-func isGlobMatched(path, globPath string) (bool, error) {
-	globPaths, err := filepath.Glob(path)
+func (i *Input) Cleanup() error {
+	close(i.InputChan)
+
+	err := i.watcher.Close()
 	if err != nil {
-		return false, err
-	}
-	for _, gp := range globPaths {
-		if path == gp {
-			return true, nil
-		}
+		return err
 	}
 
-	return false, nil
+	return nil
 }
 
 func (i *Input) Run(wg *sync.WaitGroup) {
@@ -84,8 +90,7 @@ func (i *Input) Run(wg *sync.WaitGroup) {
 		for {
 			select {
 			case <-i.ctx.Done():
-				err := i.watcher.Close()
-				close(i.InputChan)
+				err := i.Cleanup()
 				if err != nil {
 					i.logger.Error().Err(err).Msg("")
 				}
@@ -94,26 +99,63 @@ func (i *Input) Run(wg *sync.WaitGroup) {
 				if !ok {
 					continue
 				}
+
 				// Old files are still OK, followed by existing tailer
 				// But newly create files, if matched with configured glob paths,
 				// must initiate new log workflow (tailing -> shipping)
+				// We need to get the last read position of old file
+				// "Create" part of a File Rename event will always start first, before "Rename" part
 				if event.Has(fsnotify.Create) {
-					isMatched, err := isGlobMatched(event.Name, i.path)
-					if err != nil {
-						i.logger.Error().Err(err).Msg("")
-					}
-					if isMatched {
-						i.InputChan <- event.Name
+					followedEvent := <-i.watcher.Events
+					if followedEvent.Has(fsnotify.Rename) {
+						tailer := i.getTailer(followedEvent.Name)
+						if tailer != nil {
+							lastReadPosition, err := tailer.Tailer.Tell()
+							if err != nil {
+								i.logger.Error().Err(err).Msg("")
+							}
+							i.InputChan <- RenameEvent{
+								Filepath:         event.Name,
+								LastReadPosition: lastReadPosition,
+							}
+						}
+					} else {
+						// Only initiate new tailer if there isn't any existing tailer
+						// that follow this newly created file
+						tailer := i.getTailer(followedEvent.Name)
+						fmt.Println(tailer)
+						if tailer == nil {
+							i.InputChan <- RenameEvent{
+								Filepath: event.Name,
+							}
+						}
 					}
 				}
-				// TODO
-				// if event.Has(fsnotify.Create)
 			case err, ok := <-i.watcher.Errors:
 				if !ok {
 					i.logger.Error().Err(err).Msg("")
 					continue
 				}
+			default:
+				continue
 			}
 		}
 	}()
+}
+
+func (i *Input) RegisterTailer(t *tailer.Tailer) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.tailers = append(i.tailers, t)
+}
+
+func (i *Input) getTailer(path string) *tailer.Tailer {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	for _, t := range i.tailers {
+		if t.Tailer.Filename == path {
+			return t
+		}
+	}
+	return nil
 }

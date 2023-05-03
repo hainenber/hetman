@@ -15,8 +15,8 @@ import (
 
 func main() {
 	var (
-		logger  = zerolog.New(os.Stdout)
-		initLog = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+		logger     = zerolog.New(os.Stdout)
+		initLogger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 	)
 
 	// Intercept termination signals like Ctrl-C
@@ -30,7 +30,7 @@ func main() {
 	if err != nil {
 		logger.Fatal().Err(err).Msgf("Cannot read config from %s", config.DefaultConfigPath)
 	}
-	initLog.Info().Msgf("Finish reading config %s", config.DefaultConfigPath)
+	initLogger.Info().Msgf("Finish reading config %s", config.DefaultConfigPath)
 
 	// Get path-to-forwarder map from validated config
 	// This will be foundational in later input generation
@@ -38,7 +38,7 @@ func main() {
 	if err != nil {
 		logger.Fatal().Err(err).Msg("")
 	}
-	initLog.Info().Msg("Finish processing config")
+	initLogger.Info().Msg("Finish processing config")
 
 	// Read in registry file, if exists already
 	// If not, create an empty registrar
@@ -46,21 +46,22 @@ func main() {
 	if err != nil {
 		logger.Fatal().Err(err).Msg("")
 	}
-	initLog.Info().Msgf("Finish loading registry file at %v ", registrar.GetRegistryPath())
+	initLogger.Info().Msgf("Finish loading registry file at %v ", registrar.GetRegistryPath())
 
 	// Orchestrate operations for components
 	mainOrchestrator := orchestrator.NewOrchestrator(
 		orchestrator.OrchestratorOption{
 			OsSignalChan:          terminationSigs,
 			Logger:                logger,
+			InitLogger:            initLogger,
 			EnableDiskPersistence: conf.GlobalConfig.DiskBufferPersistence,
 			Registrar:             registrar,
 		},
 	)
 	// Kickstart running of Hetman's components
 	// This will block main goroutine until termination signal from OS is received
-	initLog.Info().Msgf("Running tailers")
-	initLog.Info().Msgf("Running forwarders")
+	initLogger.Info().Msgf("Running tailers")
+	initLogger.Info().Msgf("Running forwarders")
 	mainOrchestrator.Run(pathToForwarderMap)
 
 	// Perform cleanup post-shutdown

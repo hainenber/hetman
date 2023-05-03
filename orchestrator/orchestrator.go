@@ -19,6 +19,7 @@ type Orchestrator struct {
 	wg                    sync.WaitGroup
 	osSignalChan          chan os.Signal
 	logger                zerolog.Logger
+	initLogger            zerolog.Logger
 	enableDiskPersistence bool
 	registrar             *registry.Registry
 	inputs                []*input.Input
@@ -32,6 +33,7 @@ type OrchestratorOption struct {
 	Logger                zerolog.Logger
 	EnableDiskPersistence bool
 	Registrar             *registry.Registry
+	InitLogger            zerolog.Logger
 }
 
 func NewOrchestrator(options OrchestratorOption) *Orchestrator {
@@ -43,13 +45,19 @@ func NewOrchestrator(options OrchestratorOption) *Orchestrator {
 	}
 }
 
-type InputToForwarderMap map[string][]config.ForwarderConfig
+type WorkflowOptions struct {
+	input            *input.Input
+	forwarderConfigs []config.ForwarderConfig
+	readPosition     int64
+}
+
+type InputToForwarderMap map[string]*WorkflowOptions
 
 // processPathToForwarderMap process input-to-forwarder map to prevent duplicated tailers and forwarders
 func processPathToForwarderMap(inputToForwarderMap InputToForwarderMap) (InputToForwarderMap, error) {
 	result := make(InputToForwarderMap)
 
-	for target, fwdConfs := range inputToForwarderMap {
+	for target, workflowOpts := range inputToForwarderMap {
 		translatedPaths, err := filepath.Glob(target)
 		if err != nil {
 			return nil, err
@@ -57,15 +65,18 @@ func processPathToForwarderMap(inputToForwarderMap InputToForwarderMap) (InputTo
 		for _, translatedPath := range translatedPaths {
 			existingFwdConfs, ok := result[translatedPath]
 			if ok {
-				result[translatedPath] = append(existingFwdConfs, fwdConfs...)
+				result[translatedPath].forwarderConfigs = append(existingFwdConfs.forwarderConfigs, workflowOpts.forwarderConfigs...)
 			} else {
-				result[translatedPath] = fwdConfs
+				result[translatedPath] = &WorkflowOptions{
+					input:            workflowOpts.input,
+					forwarderConfigs: workflowOpts.forwarderConfigs,
+				}
 			}
 		}
 	}
 
-	for translatedPath, fwdConfs := range result {
-		result[translatedPath] = lo.UniqBy(fwdConfs, func(fc config.ForwarderConfig) string {
+	for translatedPath, workflowOpts := range result {
+		result[translatedPath].forwarderConfigs = lo.UniqBy(workflowOpts.forwarderConfigs, func(fc config.ForwarderConfig) string {
 			return fc.CreateForwarderSignature()
 		})
 	}
@@ -75,9 +86,10 @@ func processPathToForwarderMap(inputToForwarderMap InputToForwarderMap) (InputTo
 
 // Kickstart operations for forwarders and tailers
 // If logs were disk-persisted before, read them up for re-delivery
-func (o *Orchestrator) Run(pathToForwarderMap InputToForwarderMap) {
+func (o *Orchestrator) Run(pathToForwarderMap map[string][]config.ForwarderConfig) {
+	processedPathToForwarderMap := make(InputToForwarderMap)
+
 	// Initialize input from filepath
-	var inputs []*input.Input
 	for path, fwdConf := range pathToForwarderMap {
 		i, err := input.NewInput(input.InputOptions{
 			Logger: o.logger,
@@ -88,21 +100,32 @@ func (o *Orchestrator) Run(pathToForwarderMap InputToForwarderMap) {
 		}
 		o.wg.Add(1)
 		i.Run(&o.wg) // No op if path args is not glob-like
-		inputs = append(inputs, i)
+		o.inputs = append(o.inputs, i)
+
+		// Embed input for each path-to-forwarder mapping
+		processedPathToForwarderMap[path] = &WorkflowOptions{
+			input:            i,
+			forwarderConfigs: fwdConf,
+		}
 
 		// Generate log workflow for new files detected from watcher
+		o.wg.Add(1)
 		go func(innerFwdConf []config.ForwarderConfig) {
-			for newPath := range i.InputChan {
+			defer o.wg.Done()
+			for renameEvent := range i.InputChan {
 				o.runWorkflow(InputToForwarderMap{
-					newPath: innerFwdConf,
+					renameEvent.Filepath: &WorkflowOptions{
+						input:            i,
+						forwarderConfigs: innerFwdConf,
+						readPosition:     renameEvent.LastReadPosition,
+					},
 				})
 			}
 		}(fwdConf)
 	}
-	o.inputs = inputs
 
 	// Group forwarder configs by input's path
-	processedPathToForwarderMap, err := processPathToForwarderMap(pathToForwarderMap)
+	processedPathToForwarderMap, err := processPathToForwarderMap(processedPathToForwarderMap)
 	if err != nil {
 		o.logger.Fatal().Err(err).Msg("")
 	}
@@ -122,14 +145,18 @@ func (o *Orchestrator) Run(pathToForwarderMap InputToForwarderMap) {
 	o.wg.Wait()
 }
 
+// Execute tailer->buffer->forwarder workflow
 func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderMap) {
-	for translatedPath, fwdConfs := range processedPathToForwarderMap {
-		// Execute tailer->buffer->forwarder workflow
+	for translatedPath, workflowOpts := range processedPathToForwarderMap {
 		// Check if there's any saved offset for this file
+		// This can be override by read position present in workflow options
 		var offset int64
 		existingOffset, exists := o.registrar.Offsets[translatedPath]
 		if exists {
 			offset = existingOffset
+		}
+		if workflowOpts.readPosition != 0 {
+			offset = workflowOpts.readPosition
 		}
 
 		// Initialize tailer with options
@@ -142,9 +169,14 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 			o.logger.Error().Err(err).Msg("")
 		}
 
+		// Register tailer into associated input
+		// This is to get old, renamed file's last read position
+		// to continue tailing from correct offset for newly renamed file
+		workflowOpts.input.RegisterTailer(t)
+
 		// Create a buffer associative with each forwarder
 		var buffers []*buffer.Buffer
-		for _, fwdConf := range fwdConfs {
+		for _, fwdConf := range workflowOpts.forwarderConfigs {
 			fwd := forwarder.NewForwarder(fwdConf)
 			fwdBuffer := buffer.NewBuffer(fwd.Signature)
 
