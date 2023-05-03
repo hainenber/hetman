@@ -60,8 +60,6 @@ func main() {
 	)
 	// Kickstart running of Hetman's components
 	// This will block main goroutine until termination signal from OS is received
-	initLogger.Info().Msgf("Running tailers")
-	initLogger.Info().Msgf("Running forwarders")
 	mainOrchestrator.Run(pathToForwarderMap)
 
 	// Perform cleanup post-shutdown
