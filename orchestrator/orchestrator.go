@@ -112,6 +112,14 @@ func (o *Orchestrator) Run(pathToForwarderMap map[string][]config.ForwarderConfi
 		o.wg.Add(1)
 		go func(innerFwdConf []config.ForwarderConfig) {
 			defer o.wg.Done()
+
+			// If watcher is not init'ed, the target paths are not glob-like
+			// and are literal paths
+			// No need to watch for changes and spin up log workflow
+			if i.GetWatcher() == nil {
+				return
+			}
+
 			for renameEvent := range i.InputChan {
 				o.runWorkflow(InputToForwarderMap{
 					renameEvent.Filepath: &WorkflowOptions{
