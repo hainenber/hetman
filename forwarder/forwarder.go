@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"sync"
@@ -24,6 +25,7 @@ type Payload struct {
 }
 
 type Forwarder struct {
+	httpClient *http.Client
 	ctx        context.Context         // Context for forwarder struct, primarily for cancellation when needed
 	cancelFunc context.CancelFunc      // Context cancellation function
 	conf       *config.ForwarderConfig // Forwarder's config
@@ -36,6 +38,7 @@ func NewForwarder(conf config.ForwarderConfig) *Forwarder {
 	ctx, cancelFunc := context.WithCancel(context.Background())
 
 	return &Forwarder{
+		httpClient: &http.Client{},
 		ctx:        ctx,
 		cancelFunc: cancelFunc,
 		conf:       &conf,
@@ -95,7 +98,6 @@ func (f Forwarder) Close() {
 // TODO: Generalize this method to send logs to other downstream log consumers
 // Only support Loki atm
 func (f Forwarder) Forward(timestamp, logLine string) error {
-	client := &http.Client{}
 	sentTime := timestamp
 	if sentTime == "" {
 		sentTime = fmt.Sprint(time.Now().UnixNano())
@@ -126,9 +128,15 @@ func (f Forwarder) Forward(timestamp, logLine string) error {
 	}
 	req.Header.Add("Content-Type", "application/json")
 
-	resp, err := client.Do(req)
+	resp, err := f.httpClient.Do(req)
 	if err == nil && resp.StatusCode >= 400 {
 		err = fmt.Errorf("unexpected status code from log server: %v", resp.StatusCode)
+	}
+
+	// Read response's body and close off for HTTP client conn reuse
+	defer resp.Body.Close()
+	if _, bodyDiscardErr := io.Copy(io.Discard, resp.Body); bodyDiscardErr != nil {
+		err = bodyDiscardErr
 	}
 
 	return err
