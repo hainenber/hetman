@@ -9,9 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func prepareTestConfig() (*Config, []string) {
-	tmpDir, _ := os.MkdirTemp("", "test_translate_wildcards")
-	defer os.RemoveAll(tmpDir)
+func prepareTestConfig() (*Config, []string, string) {
+	tmpDir, _ := os.MkdirTemp("", "test_")
 
 	fnames := make([]string, 2)
 	for i := range make([]bool, 2) {
@@ -24,12 +23,19 @@ func prepareTestConfig() (*Config, []string) {
 	conf := &Config{
 		Targets: []TargetConfig{
 			{
-				Paths: []string{globTmpDir},
+				Paths: []string{
+					globTmpDir,
+					fnames[0],
+				},
 			},
 		},
 	}
 
-	return conf, fnames
+	return conf, fnames, tmpDir
+}
+
+func cleanup(tmpDir string) {
+	os.RemoveAll(tmpDir)
 }
 
 func TestNewConfig(t *testing.T) {
@@ -74,7 +80,8 @@ func TestDetectDuplicateTargetID(t *testing.T) {
 }
 
 func TestProcess(t *testing.T) {
-	conf, _ := prepareTestConfig()
+	conf, _, tmpDir := prepareTestConfig()
+	defer cleanup(tmpDir)
 	_, err := conf.Process()
 	if err != nil {
 		t.Errorf("expect nil, got %v", err)
