@@ -69,20 +69,23 @@ func (t *Tailer) Run(wg *sync.WaitGroup, buffers []*buffer.Buffer) {
 		for {
 			select {
 			case <-t.ctx.Done():
-				{
-					t.Tailer.Stop()
-					t.Tailer.Cleanup()
-					return
+				err := t.Cleanup()
+				if err != nil {
+					t.logger.Error().Err(err).Msg("")
 				}
+				return
 			case line := <-t.Tailer.Lines:
-				{
-					for _, b := range buffers {
-						b.BufferChan <- line.Text
-					}
+				for _, b := range buffers {
+					b.BufferChan <- line.Text
 				}
 			}
 		}
 	}()
+}
+
+func (t *Tailer) Cleanup() error {
+	defer t.Tailer.Cleanup()
+	return t.Tailer.Stop()
 }
 
 func (t *Tailer) Close() {
