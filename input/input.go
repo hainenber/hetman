@@ -2,7 +2,6 @@ package input
 
 import (
 	"context"
-	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -67,9 +66,11 @@ func (i *Input) Close() {
 func (i *Input) Cleanup() error {
 	close(i.InputChan)
 
-	err := i.watcher.Close()
-	if err != nil {
-		return err
+	if i.watcher != nil {
+		err := i.watcher.Close()
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -123,7 +124,6 @@ func (i *Input) Run(wg *sync.WaitGroup) {
 						// Only initiate new tailer if there isn't any existing tailer
 						// that follow this newly created file
 						tailer := i.getTailer(followedEvent.Name)
-						fmt.Println(tailer)
 						if tailer == nil {
 							i.InputChan <- RenameEvent{
 								Filepath: event.Name,
