@@ -55,23 +55,6 @@ func TestNewConfig(t *testing.T) {
 	}
 }
 
-// func TestTranslateWildcards(t *testing.T) {
-// 	conf, fnames := prepareTestConfig()
-
-// 	_, err := conf.TranslateWildcards()
-// 	if err != nil {
-// 		t.Errorf("expect nil, got %v", err)
-// 	}
-
-// 	for _, target := range conf.Targets {
-// 		for _, path := range target.Paths {
-// 			if path != fnames[0] && path != fnames[1] {
-// 				t.Errorf("expect %v or %v, got %v", fnames[0], fnames[1], path)
-// 			}
-// 		}
-// 	}
-// }
-
 func TestDetectDuplicateTargetID(t *testing.T) {
 	conf := &Config{
 		Targets: []TargetConfig{
