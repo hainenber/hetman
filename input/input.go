@@ -159,3 +159,9 @@ func (i *Input) getTailer(path string) *tailer.Tailer {
 	}
 	return nil
 }
+
+func (i *Input) GetWatcher() *fsnotify.Watcher {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return i.watcher
+}
