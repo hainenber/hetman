@@ -122,7 +122,7 @@ func (f Forwarder) Forward(timestamp, logLine string) error {
 
 	// Initalize HTTP client for POST request to log servers
 	// Since we're sending data as JSON data, the header must be set as well
-	req, err := http.NewRequest("POST", f.conf.URL, bytes.NewBuffer(payload))
+	req, err := http.NewRequest(http.MethodPost, f.conf.URL, bytes.NewBuffer(payload))
 	if err != nil {
 		return err
 	}
