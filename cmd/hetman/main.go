@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"github.com/rs/zerolog"
@@ -10,13 +11,11 @@ import (
 
 	"github.com/hainenber/hetman/config"
 	"github.com/hainenber/hetman/orchestrator"
-	"github.com/hainenber/hetman/registry"
 )
 
 func main() {
 	var (
-		logger     = zerolog.New(os.Stdout)
-		initLogger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+		logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 	)
 
 	// Intercept termination signals like Ctrl-C
@@ -25,43 +24,69 @@ func main() {
 	defer close(terminationSigs)
 	signal.Notify(terminationSigs, syscall.SIGINT, syscall.SIGTERM)
 
-	// Read config from file, for the first time
-	conf, err := config.NewConfig(config.DefaultConfigPath)
-	if err != nil {
-		logger.Fatal().Err(err).Msgf("Cannot read config from %s", config.DefaultConfigPath)
-	}
-	initLogger.Info().Msgf("Finish reading config %s", config.DefaultConfigPath)
+	reloadSigs := make(chan os.Signal, 1)
+	reloadSigs <- syscall.SIGHUP
+	defer close(reloadSigs)
+	signal.Notify(reloadSigs, syscall.SIGHUP)
 
-	// Get path-to-forwarder map from validated config
-	// This will be foundational in later input generation
-	pathToForwarderMap, err := conf.Process()
-	if err != nil {
-		logger.Fatal().Err(err).Msg("")
-	}
-	initLogger.Info().Msg("Finish processing config")
+	// Only allow 1 reload at 1 time
+	reloadedConfigChan := make(chan *config.Config, 1)
 
-	// Read in registry file, if exists already
-	// If not, create an empty registrar
-	registrar, err := registry.GetRegistry(conf.GlobalConfig.RegistryDir)
-	if err != nil {
-		logger.Fatal().Err(err).Msg("")
-	}
-	initLogger.Info().Msgf("Finish loading registry file at %v ", registrar.GetRegistryPath())
+	// Dedicated goroutine for generating reloaded config
+	// This can occur indefinitely in agent's lifetime
+	var wg sync.WaitGroup
 
-	// Orchestrate operations for components
-	mainOrchestrator := orchestrator.NewOrchestrator(
-		orchestrator.OrchestratorOption{
-			OsSignalChan:          terminationSigs,
-			Logger:                logger,
-			InitLogger:            initLogger,
-			EnableDiskPersistence: conf.GlobalConfig.DiskBufferPersistence,
-			Registrar:             registrar,
-		},
-	)
-	// Kickstart running of Hetman's components
-	// This will block main goroutine until termination signal from OS is received
-	mainOrchestrator.Run(pathToForwarderMap)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
 
-	// Perform cleanup post-shutdown
-	defer mainOrchestrator.Cleanup()
+		var (
+			mainOrchestrator *orchestrator.Orchestrator
+			doneChan         chan struct{}
+		)
+
+		for {
+			select {
+			case <-terminationSigs:
+				if mainOrchestrator != nil {
+					doneChan <- struct{}{}
+					// Perform cleanup post-shutdown
+					defer mainOrchestrator.Cleanup()
+				}
+				return
+
+			case <-reloadSigs:
+				if mainOrchestrator != nil {
+					doneChan <- struct{}{}
+					// Perform cleanup in case of reloaded confs not
+					mainOrchestrator.Cleanup()
+				}
+				// Read newly reloaded config from changed file
+				conf, err := config.NewConfig(config.DefaultConfigPath)
+				if err != nil {
+					logger.Fatal().Err(err).Msgf("Cannot read config from %s", config.DefaultConfigPath)
+				}
+				logger.Info().Msgf("Finish reading config %s", config.DefaultConfigPath)
+				// Sent new conf to channel
+				reloadedConfigChan <- conf
+
+			// Recreate orchestrator after receiving reload signal
+			case conf := <-reloadedConfigChan:
+				// Orchestrate operations for components
+				mainOrchestrator = orchestrator.NewOrchestrator(
+					orchestrator.OrchestratorOption{
+						DoneChan: doneChan,
+						Logger:   logger,
+						Config:   conf,
+					},
+				)
+				// Kickstart running of Hetman's components
+				// A non-block op, will allow goroutine to listen for upcoming reload signal
+				go mainOrchestrator.Run()
+			}
+		}
+	}()
+
+	// Wait until the graceful reload's channel has returned
+	wg.Wait()
 }

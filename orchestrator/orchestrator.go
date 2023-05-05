@@ -1,7 +1,6 @@
 package orchestrator
 
 import (
-	"os"
 	"path/filepath"
 	"sync"
 
@@ -17,31 +16,47 @@ import (
 
 type Orchestrator struct {
 	wg                    sync.WaitGroup
-	osSignalChan          chan os.Signal
+	config                *config.Config
+	doneChan              chan struct{}
 	logger                zerolog.Logger
-	initLogger            zerolog.Logger
 	enableDiskPersistence bool
 	registrar             *registry.Registry
 	inputs                []*input.Input
 	tailers               []*tailer.Tailer
 	buffers               []*buffer.Buffer
 	forwarders            []*forwarder.Forwarder
+	pathToForwarderMap    map[string][]config.ForwarderConfig
 }
 
 type OrchestratorOption struct {
-	OsSignalChan          chan os.Signal
-	Logger                zerolog.Logger
-	EnableDiskPersistence bool
-	Registrar             *registry.Registry
-	InitLogger            zerolog.Logger
+	DoneChan chan struct{}
+	Logger   zerolog.Logger
+	Config   *config.Config
 }
 
 func NewOrchestrator(options OrchestratorOption) *Orchestrator {
+	// Get path-to-forwarder map from validated config
+	// This will be foundational in later input generation
+	pathToForwarderMap, err := options.Config.Process()
+	if err != nil {
+		options.Logger.Fatal().Err(err).Msg("")
+	}
+	options.Logger.Info().Msg("Finish processing config")
+
+	// Read in registry file, if exists already
+	// If not, create an empty registrar
+	registrar, err := registry.GetRegistry(options.Config.GlobalConfig.RegistryDir)
+	if err != nil {
+		options.Logger.Fatal().Err(err).Msg("")
+	}
+	options.Logger.Info().Msgf("Finish loading registry file at %v ", registrar.GetRegistryPath())
+
 	return &Orchestrator{
-		osSignalChan:          options.OsSignalChan,
-		logger:                options.Logger,
-		enableDiskPersistence: options.EnableDiskPersistence,
-		registrar:             options.Registrar,
+		doneChan:           options.DoneChan,
+		config:             options.Config,
+		logger:             options.Logger,
+		registrar:          registrar,
+		pathToForwarderMap: pathToForwarderMap,
 	}
 }
 
@@ -86,11 +101,12 @@ func processPathToForwarderMap(inputToForwarderMap InputToForwarderMap) (InputTo
 
 // Kickstart operations for forwarders and tailers
 // If logs were disk-persisted before, read them up for re-delivery
-func (o *Orchestrator) Run(pathToForwarderMap map[string][]config.ForwarderConfig) {
+func (o *Orchestrator) Run() {
 	processedPathToForwarderMap := make(InputToForwarderMap)
 
 	// Initialize input from filepath
-	for path, fwdConf := range pathToForwarderMap {
+	o.logger.Info().Msg("Initializing inputs...")
+	for path, fwdConf := range o.pathToForwarderMap {
 		i, err := input.NewInput(input.InputOptions{
 			Logger: o.logger,
 			Path:   path,
@@ -100,6 +116,7 @@ func (o *Orchestrator) Run(pathToForwarderMap map[string][]config.ForwarderConfi
 		}
 		o.wg.Add(1)
 		i.Run(&o.wg) // No op if path args is not glob-like
+		o.logger.Info().Msgf("Input %v is running", path)
 		o.inputs = append(o.inputs, i)
 
 		// Embed input for each path-to-forwarder mapping
@@ -141,8 +158,9 @@ func (o *Orchestrator) Run(pathToForwarderMap map[string][]config.ForwarderConfi
 	// Execute tailer->buffer->forwarder workflow for each mapping
 	o.runWorkflow(processedPathToForwarderMap)
 
-	// Block until termination signal(s) receive
-	<-o.osSignalChan
+	// Block until signal(s) to close resources is received
+	<-o.doneChan
+	o.logger.Info().Msg("Signal received. Start closing resources...")
 
 	// Once receiving signals, close all components registered to
 	// the orchestrator
@@ -168,6 +186,7 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 		}
 
 		// Initialize tailer with options
+		o.logger.Info().Msg("Initializing tailers...")
 		t, err := tailer.NewTailer(tailer.TailerOptions{
 			File:   translatedPath,
 			Logger: o.logger,
@@ -218,15 +237,19 @@ func (o *Orchestrator) Close() {
 	for _, i := range o.inputs {
 		i.Close()
 	}
+	o.logger.Info().Msg("Sent close signal to created inputs")
 	for _, t := range o.tailers {
 		t.Close()
 	}
+	o.logger.Info().Msg("Sent close signal to created tailers")
 	for _, f := range o.forwarders {
 		f.Close()
 	}
+	o.logger.Info().Msg("Sent close signal to created forwarders")
 	for _, b := range o.buffers {
 		b.Close()
 	}
+	o.logger.Info().Msg("Sent close signal to created buffers")
 }
 
 func (o *Orchestrator) Cleanup() {
