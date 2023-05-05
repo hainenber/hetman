@@ -56,22 +56,18 @@ func (f Forwarder) Run(wg *sync.WaitGroup, bufferChan chan string) {
 		for {
 			select {
 			case <-f.ctx.Done():
-				{
-					err := f.Flush() // Last attempt sending all consumed logs to downstream before shutdown
-					if err != nil {
-						f.logger.Error().Err(err).Msg("")
-					}
-					return
+				err := f.Flush() // Last attempt sending all consumed logs to downstream before shutdown
+				if err != nil {
+					f.logger.Error().Err(err).Msg("")
 				}
+				return
 			// Send disk-buffered logs
 			// If failed, will buffer logs back to channel for next persistence
 			case line := <-f.LogChan:
-				{
-					err := f.Forward("", line)
-					if err != nil {
-						f.logger.Error().Err(err).Msg("")
-						bufferChan <- line
-					}
+				err := f.Forward("", line)
+				if err != nil {
+					f.logger.Error().Err(err).Msg("")
+					bufferChan <- line
 				}
 			}
 		}
@@ -120,7 +116,7 @@ func (f Forwarder) Forward(timestamp, logLine string) error {
 		return err
 	}
 
-	// Initalize HTTP client for POST request to log servers
+	// Initialize POST request to log servers
 	// Since we're sending data as JSON data, the header must be set as well
 	req, err := http.NewRequest(http.MethodPost, f.conf.URL, bytes.NewBuffer(payload))
 	if err != nil {
