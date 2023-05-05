@@ -56,8 +56,10 @@ func (f Forwarder) Run(wg *sync.WaitGroup, bufferChan chan string) {
 		for {
 			select {
 			case <-f.ctx.Done():
-				err := f.Flush() // Last attempt sending all consumed logs to downstream before shutdown
-				if err != nil {
+				// Last attempt sending all consumed logs to downstream before shutdown
+				// If flush attempt failed, queue logs back to buffer
+				errors := f.Flush(bufferChan)
+				for _, err := range errors {
 					f.logger.Error().Err(err).Msg("")
 				}
 				return
@@ -75,15 +77,15 @@ func (f Forwarder) Run(wg *sync.WaitGroup, bufferChan chan string) {
 }
 
 // Flush all consumed messages, forwarding to remote endpoints
-func (f Forwarder) Flush() error {
-	for len(f.LogChan) > 0 {
-		line := <-f.LogChan
-		err := f.Forward("", line)
-		if err != nil {
-			return err
+func (f Forwarder) Flush(bufferChan chan string) []error {
+	var errors []error
+	for line := range f.LogChan {
+		if err := f.Forward("", line); err != nil {
+			errors = append(errors, err)
+			bufferChan <- line
 		}
 	}
-	return nil
+	return errors
 }
 
 // Call function to cancel context
@@ -130,9 +132,11 @@ func (f Forwarder) Forward(timestamp, logLine string) error {
 	}
 
 	// Read response's body and close off for HTTP client conn reuse
-	defer resp.Body.Close()
-	if _, bodyDiscardErr := io.Copy(io.Discard, resp.Body); bodyDiscardErr != nil {
-		err = bodyDiscardErr
+	if resp.Body != nil {
+		defer resp.Body.Close()
+		if _, bodyDiscardErr := io.Copy(io.Discard, resp.Body); bodyDiscardErr != nil {
+			err = bodyDiscardErr
+		}
 	}
 
 	return err

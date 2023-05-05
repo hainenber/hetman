@@ -31,6 +31,7 @@ func (b *Buffer) Run(wg *sync.WaitGroup, fwdChan chan string) {
 		for {
 			select {
 			case <-b.ctx.Done():
+				close(fwdChan)
 				return
 			case line := <-b.BufferChan:
 				// Try sending tailed log line to forwarder's channel

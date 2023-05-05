@@ -12,6 +12,7 @@ import (
 )
 
 type Tailer struct {
+	mu         sync.Mutex
 	Tailer     *tail.Tail
 	Offset     int64
 	ctx        context.Context
@@ -73,6 +74,10 @@ func (t *Tailer) Run(wg *sync.WaitGroup, buffers []*buffer.Buffer) {
 				if err != nil {
 					t.logger.Error().Err(err).Msg("")
 				}
+				// Close buffer's channel once termination
+				for _, b := range buffers {
+					close(b.BufferChan)
+				}
 				return
 			case line := <-t.Tailer.Lines:
 				for _, b := range buffers {
@@ -89,6 +94,9 @@ func (t *Tailer) Cleanup() error {
 }
 
 func (t *Tailer) Close() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
 	t.cancelFunc()
 
 	// Register last read position
