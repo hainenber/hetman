@@ -116,11 +116,17 @@ func TestForward(t *testing.T) {
 	}))
 	defer server.Close()
 
-	fwd := prepareTestForwarder(server.URL)
+	// Test retryable forward
+	var failedReqCount int
+	failedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		failedReqCount++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer failedServer.Close()
 
-	err := fwd.Forward("", "abc")
-	assert.Nil(t, err)
+	fwd := prepareTestForwarder(failedServer.URL)
 
-	err = fwd.Forward("123", "def")
-	assert.Nil(t, err)
+	err := fwd.forward("123", "failed abc")
+	assert.NotNil(t, err)
+	assert.Equal(t, 5, failedReqCount)
 }
