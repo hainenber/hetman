@@ -74,10 +74,7 @@ func (t *Tailer) Run(wg *sync.WaitGroup, buffers []*buffer.Buffer) {
 				if err != nil {
 					t.logger.Error().Err(err).Msg("")
 				}
-				// Close buffer's channel once termination
-				for _, b := range buffers {
-					close(b.BufferChan)
-				}
+				// Buffer channels will stil be open to receive failed-to-forward log
 				return
 			case line := <-t.Tailer.Lines:
 				for _, b := range buffers {
