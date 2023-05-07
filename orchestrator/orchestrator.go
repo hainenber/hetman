@@ -15,17 +15,16 @@ import (
 )
 
 type Orchestrator struct {
-	wg                    sync.WaitGroup
-	config                *config.Config
-	doneChan              chan struct{}
-	logger                zerolog.Logger
-	enableDiskPersistence bool
-	registrar             *registry.Registry
-	inputs                []*input.Input
-	tailers               []*tailer.Tailer
-	buffers               []*buffer.Buffer
-	forwarders            []*forwarder.Forwarder
-	pathToForwarderMap    map[string][]config.ForwarderConfig
+	wg                 sync.WaitGroup
+	config             *config.Config
+	doneChan           chan struct{}
+	logger             zerolog.Logger
+	registrar          *registry.Registry
+	inputs             []*input.Input
+	tailers            []*tailer.Tailer
+	buffers            []*buffer.Buffer
+	forwarders         []*forwarder.Forwarder
+	pathToForwarderMap map[string][]config.ForwarderConfig
 }
 
 type OrchestratorOption struct {
@@ -101,7 +100,7 @@ func processPathToForwarderMap(inputToForwarderMap InputToForwarderMap) (InputTo
 
 // Kickstart operations for forwarders and tailers
 // If logs were disk-persisted before, read them up for re-delivery
-func (o *Orchestrator) Run() {
+func (o *Orchestrator) Run() struct{} {
 	processedPathToForwarderMap := make(InputToForwarderMap)
 
 	// Initialize input from filepath
@@ -169,6 +168,13 @@ func (o *Orchestrator) Run() {
 	// Ensure all registered tailer and forwarder goroutines
 	// has finished running
 	o.wg.Wait()
+
+	// Perform cleanup once everything has been shut down
+	o.Cleanup()
+
+	// Empty struct to indicat main goroutine that this orchestrator
+	// has been cleanly removed
+	return struct{}{}
 }
 
 // Execute tailer->buffer->forwarder workflow
@@ -186,7 +192,6 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 		}
 
 		// Initialize tailer with options
-		o.logger.Info().Msg("Initializing tailers...")
 		t, err := tailer.NewTailer(tailer.TailerOptions{
 			File:   translatedPath,
 			Logger: o.logger,
@@ -195,11 +200,13 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 		if err != nil {
 			o.logger.Error().Err(err).Msg("")
 		}
+		o.logger.Info().Msgf("Tailer for path %v has been initialized", translatedPath)
 
 		// Register tailer into associated input
 		// This is to get old, renamed file's last read position
 		// to continue tailing from correct offset for newly renamed file
 		workflowOpts.input.RegisterTailer(t)
+		o.logger.Info().Msgf("Tailer for path %v has been registered", translatedPath)
 
 		// Create a buffer associative with each forwarder
 		var buffers []*buffer.Buffer
@@ -208,7 +215,7 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 			fwdBuffer := buffer.NewBuffer(fwd.Signature)
 
 			// If enabled, read disk-persisted logs from prior file, if exists
-			if o.enableDiskPersistence {
+			if o.config.GlobalConfig.DiskBufferPersistence {
 				if bufferedPath, exists := o.registrar.BufferedPaths[fwdBuffer.GetSignature()]; exists {
 					fwdBuffer.LoadPersistedLogs(bufferedPath)
 				}
@@ -228,6 +235,7 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 		o.tailers = append(o.tailers, t)
 		o.wg.Add(1)
 		t.Run(&o.wg, buffers)
+		o.logger.Info().Msgf("Tailer for path \"%v\" is now running", t.Tailer.Filename)
 	}
 }
 
@@ -256,28 +264,30 @@ func (o *Orchestrator) Cleanup() {
 	// Save last read position by tailers to local registry
 	// Prevent sending duplicate logs and allow resuming forward new log lines
 	lastReadPositions := make(map[string]int64, len(o.tailers))
-	for _, tailer := range o.tailers {
-		lastReadPositions[tailer.Tailer.Filename] = tailer.Offset
+	for _, t := range o.tailers {
+		lastReadPositions[t.Tailer.Filename] = t.Offset
 	}
 	err := registry.SaveLastPosition(o.registrar.GetRegistryDirPath(), lastReadPositions)
 	if err != nil {
 		o.logger.Error().Err(err).Msg("")
 	}
+	o.logger.Info().Msg("Finish saving last read positions")
 
-	// If enabled, persist undelivered, persist buffered logs to disk
+	// If enabled, persist undelivered, buffered logs to disk
 	// Map forwarder's signature with corresponding buffered filepath and save to local registry
-	if o.enableDiskPersistence {
+	if o.config.GlobalConfig.DiskBufferPersistence {
 		diskBufferedFilepaths := make(map[string]string, len(o.buffers))
-		for _, storedBuffer := range o.buffers {
-			diskBufferedFilepath, err := storedBuffer.PersistToDisk()
+		for _, b := range o.buffers {
+			diskBufferedFilepath, err := b.PersistToDisk()
 			if err != nil {
 				o.logger.Error().Err(err).Msg("")
 			}
-			diskBufferedFilepaths[storedBuffer.GetSignature()] = diskBufferedFilepath
+			diskBufferedFilepaths[b.GetSignature()] = diskBufferedFilepath
 		}
 		err = registry.SaveDiskBufferedFilePaths(o.registrar.GetRegistryDirPath(), diskBufferedFilepaths)
 		if err != nil {
 			o.logger.Error().Err(err).Msg("")
 		}
 	}
+	o.logger.Info().Msg("Finish persisting buffered logs to disk")
 }
