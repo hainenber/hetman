@@ -44,7 +44,6 @@ func NewTailer(tailerOptions TailerOptions) (*Tailer, error) {
 	}
 
 	// Create tailer
-	// TODO: Implement File Rotate Create Correctness (https://github.com/vectordotdev/vector-test-harness/blob/master/cases/file_rotate_create_correctness/README.md)
 	tailer, err := tail.TailFile(
 		tailerOptions.File,
 		tail.Config{Follow: true, ReOpen: true, Logger: tailerLogger, Location: location},
@@ -86,7 +85,6 @@ func (t *Tailer) Run(wg *sync.WaitGroup, buffers []*buffer.Buffer) {
 }
 
 func (t *Tailer) Cleanup() error {
-	defer t.Tailer.Cleanup()
 	return t.Tailer.Stop()
 }
 
