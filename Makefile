@@ -7,7 +7,13 @@ lint:
 	go test -v ./...
 
 run:
-	go run ./...
+	rm -rf ./bin
+	mkdir ./bin
+	go build -o bin ./cmd/hetman
+	./bin/hetman
 
 kill:
-	ps aux | grep "go run" | grep -v grep | awk '{ print $$2 }' | xargs kill
+	ps aux | grep "hetman" | grep -v grep | awk '{ print $$2 }' | xargs kill
+
+reload:
+	kill -HUP $$(ps aux | grep "hetman" | grep -v grep | awk '{ print $$2 }')

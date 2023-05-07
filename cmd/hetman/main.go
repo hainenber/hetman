@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"github.com/rs/zerolog"
@@ -10,58 +11,75 @@ import (
 
 	"github.com/hainenber/hetman/config"
 	"github.com/hainenber/hetman/orchestrator"
-	"github.com/hainenber/hetman/registry"
 )
 
 func main() {
 	var (
-		logger     = zerolog.New(os.Stdout)
-		initLogger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+		mainOrchestrator   *orchestrator.Orchestrator
+		wg                 sync.WaitGroup
+		logger             = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+		doneChan           = make(chan struct{}, 1)
+		doneCleanupChan    = make(chan struct{}, 1)
+		reloadedConfigChan = make(chan *config.Config, 1) // Only allow 1 reload attempt at the same time
 	)
 
 	// Intercept termination signals like Ctrl-C
 	// Graceful shutdown and cleanup resources (goroutines and channels)
 	terminationSigs := make(chan os.Signal, 1)
 	defer close(terminationSigs)
-	signal.Notify(terminationSigs, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(terminationSigs, os.Interrupt, syscall.SIGTERM)
 
-	// Read config from file, for the first time
-	conf, err := config.NewConfig(config.DefaultConfigPath)
-	if err != nil {
-		logger.Fatal().Err(err).Msgf("Cannot read config from %s", config.DefaultConfigPath)
+	reloadSigs := make(chan os.Signal, 1)
+	reloadSigs <- syscall.SIGHUP
+	defer close(reloadSigs)
+	signal.Notify(reloadSigs, syscall.SIGHUP)
+
+	// Infinite loop that blocks main goroutine to handle either graceful reload or termination when corresponding signal(s) are received
+	// Dedicated goroutine for generating reloaded config
+	// This can occur indefinitely in agent's lifetime
+out:
+	for {
+		select {
+		case <-terminationSigs:
+			if mainOrchestrator != nil {
+				doneChan <- struct{}{}
+				<-doneCleanupChan
+			}
+			break out
+		case <-reloadSigs:
+			if mainOrchestrator != nil {
+				doneChan <- struct{}{}
+				<-doneCleanupChan
+			}
+			// Read newly reloaded config from changed file
+			conf, err := config.NewConfig(config.DefaultConfigPath)
+			if err != nil {
+				logger.Fatal().Err(err).Msgf("Cannot read config from %s", config.DefaultConfigPath)
+			}
+			logger.Info().Msgf("Finish reading config %s", config.DefaultConfigPath)
+			// Sent new conf to channel
+			reloadedConfigChan <- conf
+
+		// Recreate orchestrator after receiving reload signal
+		case conf := <-reloadedConfigChan:
+			// Orchestrate operations for components
+			mainOrchestrator = orchestrator.NewOrchestrator(
+				orchestrator.OrchestratorOption{
+					DoneChan: doneChan,
+					Logger:   logger,
+					Config:   conf,
+				},
+			)
+			// Kickstart running of Hetman's components
+			// A non-block op, will allow goroutine to listen for upcoming reload signal
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				doneCleanupChan <- mainOrchestrator.Run()
+			}()
+		}
 	}
-	initLogger.Info().Msgf("Finish reading config %s", config.DefaultConfigPath)
 
-	// Get path-to-forwarder map from validated config
-	// This will be foundational in later input generation
-	pathToForwarderMap, err := conf.Process()
-	if err != nil {
-		logger.Fatal().Err(err).Msg("")
-	}
-	initLogger.Info().Msg("Finish processing config")
-
-	// Read in registry file, if exists already
-	// If not, create an empty registrar
-	registrar, err := registry.GetRegistry(conf.GlobalConfig.RegistryDir)
-	if err != nil {
-		logger.Fatal().Err(err).Msg("")
-	}
-	initLogger.Info().Msgf("Finish loading registry file at %v ", registrar.GetRegistryPath())
-
-	// Orchestrate operations for components
-	mainOrchestrator := orchestrator.NewOrchestrator(
-		orchestrator.OrchestratorOption{
-			OsSignalChan:          terminationSigs,
-			Logger:                logger,
-			InitLogger:            initLogger,
-			EnableDiskPersistence: conf.GlobalConfig.DiskBufferPersistence,
-			Registrar:             registrar,
-		},
-	)
-	// Kickstart running of Hetman's components
-	// This will block main goroutine until termination signal from OS is received
-	mainOrchestrator.Run(pathToForwarderMap)
-
-	// Perform cleanup post-shutdown
-	defer mainOrchestrator.Cleanup()
+	// Wait until main orchestrator's goroutine has been closed
+	wg.Wait()
 }

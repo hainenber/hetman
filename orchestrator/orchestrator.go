@@ -1,7 +1,6 @@
 package orchestrator
 
 import (
-	"os"
 	"path/filepath"
 	"sync"
 
@@ -16,32 +15,47 @@ import (
 )
 
 type Orchestrator struct {
-	wg                    sync.WaitGroup
-	osSignalChan          chan os.Signal
-	logger                zerolog.Logger
-	initLogger            zerolog.Logger
-	enableDiskPersistence bool
-	registrar             *registry.Registry
-	inputs                []*input.Input
-	tailers               []*tailer.Tailer
-	buffers               []*buffer.Buffer
-	forwarders            []*forwarder.Forwarder
+	wg                 sync.WaitGroup
+	config             *config.Config
+	doneChan           chan struct{}
+	logger             zerolog.Logger
+	registrar          *registry.Registry
+	inputs             []*input.Input
+	tailers            []*tailer.Tailer
+	buffers            []*buffer.Buffer
+	forwarders         []*forwarder.Forwarder
+	pathToForwarderMap map[string][]config.ForwarderConfig
 }
 
 type OrchestratorOption struct {
-	OsSignalChan          chan os.Signal
-	Logger                zerolog.Logger
-	EnableDiskPersistence bool
-	Registrar             *registry.Registry
-	InitLogger            zerolog.Logger
+	DoneChan chan struct{}
+	Logger   zerolog.Logger
+	Config   *config.Config
 }
 
 func NewOrchestrator(options OrchestratorOption) *Orchestrator {
+	// Get path-to-forwarder map from validated config
+	// This will be foundational in later input generation
+	pathToForwarderMap, err := options.Config.Process()
+	if err != nil {
+		options.Logger.Fatal().Err(err).Msg("")
+	}
+	options.Logger.Info().Msg("Finish processing config")
+
+	// Read in registry file, if exists already
+	// If not, create an empty registrar
+	registrar, err := registry.GetRegistry(options.Config.GlobalConfig.RegistryDir)
+	if err != nil {
+		options.Logger.Fatal().Err(err).Msg("")
+	}
+	options.Logger.Info().Msgf("Finish loading registry file at %v ", registrar.GetRegistryPath())
+
 	return &Orchestrator{
-		osSignalChan:          options.OsSignalChan,
-		logger:                options.Logger,
-		enableDiskPersistence: options.EnableDiskPersistence,
-		registrar:             options.Registrar,
+		doneChan:           options.DoneChan,
+		config:             options.Config,
+		logger:             options.Logger,
+		registrar:          registrar,
+		pathToForwarderMap: pathToForwarderMap,
 	}
 }
 
@@ -86,11 +100,12 @@ func processPathToForwarderMap(inputToForwarderMap InputToForwarderMap) (InputTo
 
 // Kickstart operations for forwarders and tailers
 // If logs were disk-persisted before, read them up for re-delivery
-func (o *Orchestrator) Run(pathToForwarderMap map[string][]config.ForwarderConfig) {
+func (o *Orchestrator) Run() struct{} {
 	processedPathToForwarderMap := make(InputToForwarderMap)
 
 	// Initialize input from filepath
-	for path, fwdConf := range pathToForwarderMap {
+	o.logger.Info().Msg("Initializing inputs...")
+	for path, fwdConf := range o.pathToForwarderMap {
 		i, err := input.NewInput(input.InputOptions{
 			Logger: o.logger,
 			Path:   path,
@@ -100,6 +115,7 @@ func (o *Orchestrator) Run(pathToForwarderMap map[string][]config.ForwarderConfi
 		}
 		o.wg.Add(1)
 		i.Run(&o.wg) // No op if path args is not glob-like
+		o.logger.Info().Msgf("Input %v is running", path)
 		o.inputs = append(o.inputs, i)
 
 		// Embed input for each path-to-forwarder mapping
@@ -141,8 +157,9 @@ func (o *Orchestrator) Run(pathToForwarderMap map[string][]config.ForwarderConfi
 	// Execute tailer->buffer->forwarder workflow for each mapping
 	o.runWorkflow(processedPathToForwarderMap)
 
-	// Block until termination signal(s) receive
-	<-o.osSignalChan
+	// Block until signal(s) to close resources is received
+	<-o.doneChan
+	o.logger.Info().Msg("Signal received. Start closing resources...")
 
 	// Once receiving signals, close all components registered to
 	// the orchestrator
@@ -151,6 +168,13 @@ func (o *Orchestrator) Run(pathToForwarderMap map[string][]config.ForwarderConfi
 	// Ensure all registered tailer and forwarder goroutines
 	// has finished running
 	o.wg.Wait()
+
+	// Perform cleanup once everything has been shut down
+	o.Cleanup()
+
+	// Empty struct to indicat main goroutine that this orchestrator
+	// has been cleanly removed
+	return struct{}{}
 }
 
 // Execute tailer->buffer->forwarder workflow
@@ -176,11 +200,13 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 		if err != nil {
 			o.logger.Error().Err(err).Msg("")
 		}
+		o.logger.Info().Msgf("Tailer for path %v has been initialized", translatedPath)
 
 		// Register tailer into associated input
 		// This is to get old, renamed file's last read position
 		// to continue tailing from correct offset for newly renamed file
 		workflowOpts.input.RegisterTailer(t)
+		o.logger.Info().Msgf("Tailer for path %v has been registered", translatedPath)
 
 		// Create a buffer associative with each forwarder
 		var buffers []*buffer.Buffer
@@ -189,7 +215,7 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 			fwdBuffer := buffer.NewBuffer(fwd.Signature)
 
 			// If enabled, read disk-persisted logs from prior file, if exists
-			if o.enableDiskPersistence {
+			if o.config.GlobalConfig.DiskBufferPersistence {
 				if bufferedPath, exists := o.registrar.BufferedPaths[fwdBuffer.GetSignature()]; exists {
 					fwdBuffer.LoadPersistedLogs(bufferedPath)
 				}
@@ -209,6 +235,7 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 		o.tailers = append(o.tailers, t)
 		o.wg.Add(1)
 		t.Run(&o.wg, buffers)
+		o.logger.Info().Msgf("Tailer for path \"%v\" is now running", t.Tailer.Filename)
 	}
 }
 
@@ -218,43 +245,49 @@ func (o *Orchestrator) Close() {
 	for _, i := range o.inputs {
 		i.Close()
 	}
+	o.logger.Info().Msg("Sent close signal to created inputs")
 	for _, t := range o.tailers {
 		t.Close()
 	}
+	o.logger.Info().Msg("Sent close signal to created tailers")
 	for _, f := range o.forwarders {
 		f.Close()
 	}
+	o.logger.Info().Msg("Sent close signal to created forwarders")
 	for _, b := range o.buffers {
 		b.Close()
 	}
+	o.logger.Info().Msg("Sent close signal to created buffers")
 }
 
 func (o *Orchestrator) Cleanup() {
 	// Save last read position by tailers to local registry
 	// Prevent sending duplicate logs and allow resuming forward new log lines
 	lastReadPositions := make(map[string]int64, len(o.tailers))
-	for _, tailer := range o.tailers {
-		lastReadPositions[tailer.Tailer.Filename] = tailer.Offset
+	for _, t := range o.tailers {
+		lastReadPositions[t.Tailer.Filename] = t.Offset
 	}
 	err := registry.SaveLastPosition(o.registrar.GetRegistryDirPath(), lastReadPositions)
 	if err != nil {
 		o.logger.Error().Err(err).Msg("")
 	}
+	o.logger.Info().Msg("Finish saving last read positions")
 
-	// If enabled, persist undelivered, persist buffered logs to disk
+	// If enabled, persist undelivered, buffered logs to disk
 	// Map forwarder's signature with corresponding buffered filepath and save to local registry
-	if o.enableDiskPersistence {
+	if o.config.GlobalConfig.DiskBufferPersistence {
 		diskBufferedFilepaths := make(map[string]string, len(o.buffers))
-		for _, storedBuffer := range o.buffers {
-			diskBufferedFilepath, err := storedBuffer.PersistToDisk()
+		for _, b := range o.buffers {
+			diskBufferedFilepath, err := b.PersistToDisk()
 			if err != nil {
 				o.logger.Error().Err(err).Msg("")
 			}
-			diskBufferedFilepaths[storedBuffer.GetSignature()] = diskBufferedFilepath
+			diskBufferedFilepaths[b.GetSignature()] = diskBufferedFilepath
 		}
 		err = registry.SaveDiskBufferedFilePaths(o.registrar.GetRegistryDirPath(), diskBufferedFilepaths)
 		if err != nil {
 			o.logger.Error().Err(err).Msg("")
 		}
 	}
+	o.logger.Info().Msg("Finish persisting buffered logs to disk")
 }

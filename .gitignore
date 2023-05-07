@@ -3,3 +3,6 @@ testdata
 
 # Genuine configs
 hetman.yaml
+
+# Build binary 
+bin
