@@ -10,6 +10,7 @@ At the moment, the agent only supports Loki as downstream log consumer
 * Correctly follow post-renaming both old and new files, similar to `logrotate`'s `create` directive.
 * Correctly follow file when rotated by truncating old files, similar to `logrotate`'s `copytruncate` directive.
 * Reset read position of a tailed file during truncation.
+* Gracefully reload configurations changes when sending SIGHUP to running agent
 
 ## Roadmap
 - [ ] Allow configuration with VRL.
@@ -18,4 +19,4 @@ At the moment, the agent only supports Loki as downstream log consumer
 - [ ] Support multiple downstreams aside from Loki.
 - [ ] Work with downstream's backpressure signal.
 - [ ] Code coverage >80%
-- [ ] Ability to gracefully reload.
+- [ ] Fleet management
