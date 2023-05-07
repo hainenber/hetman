@@ -7,8 +7,10 @@ lint:
 	go test -v ./...
 
 run:
-	go build -o hetman ./cmd/hetman
-	./hetman
+	rm -rf ./bin
+	mkdir ./bin
+	go build -o bin ./cmd/hetman
+	./bin/hetman
 
 kill:
 	ps aux | grep "hetman" | grep -v grep | awk '{ print $$2 }' | xargs kill

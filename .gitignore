@@ -5,4 +5,4 @@ testdata
 hetman.yaml
 
 # Build binary 
-hetman
+bin
