@@ -16,6 +16,11 @@ import (
 	"github.com/rs/zerolog"
 )
 
+type ForwardArg struct {
+	timestamp string
+	logLine   string
+}
+
 type PayloadStream struct {
 	Stream map[string]string `json:"stream"`
 	Values [][]string        `json:"values"`
@@ -70,11 +75,10 @@ func (f *Forwarder) Run(wg *sync.WaitGroup, bufferChan chan string) {
 					f.logger.Error().Err(err).Msg("")
 				}
 				return
-			// Send disk-buffered logs
+			// Send buffered logs
 			// If failed, will queue log(s) back to buffer channel for next persistence
 			case line := <-f.LogChan:
-				err := f.forward("", line)
-				if err != nil {
+				if err := f.forward(ForwardArg{timestamp: "", logLine: line}); err != nil {
 					f.logger.Error().Err(err).Msg("")
 					bufferChan <- line
 				}
@@ -87,7 +91,7 @@ func (f *Forwarder) Run(wg *sync.WaitGroup, bufferChan chan string) {
 func (f *Forwarder) Flush(bufferChan chan string) []error {
 	var errors []error
 	for line := range f.LogChan {
-		if err := f.forward("", line); err != nil {
+		if err := f.forward(ForwardArg{timestamp: "", logLine: line}); err != nil {
 			errors = append(errors, err)
 			bufferChan <- line
 		}
@@ -102,13 +106,16 @@ func (f *Forwarder) Close() {
 
 // TODO: Generalize this method to send logs to other downstream log consumers
 // Only support Loki atm
-func (f *Forwarder) forward(timestamp, logLine string) error {
-	sentTime := timestamp
-	if sentTime == "" {
-		sentTime = fmt.Sprint(time.Now().UnixNano())
-	}
-	logAndTimestamp := []string{
-		sentTime, logLine,
+func (f *Forwarder) forward(forwardArgs ...ForwardArg) error {
+	// Initialize timestamp in case not present in args
+	// Setting up log payload
+	payload := make([][]string, len(forwardArgs))
+	for i, arg := range forwardArgs {
+		sentTime := arg.timestamp
+		if sentTime == "" {
+			sentTime = fmt.Sprint(time.Now().UnixNano())
+		}
+		payload[i] = []string{sentTime, arg.logLine}
 	}
 
 	// Wrap sections of making HTTP request to downstream and process response
@@ -121,7 +128,7 @@ func (f *Forwarder) forward(timestamp, logLine string) error {
 			Streams: []PayloadStream{
 				{
 					Stream: f.conf.AddTags,
-					Values: [][]string{logAndTimestamp},
+					Values: payload,
 				},
 			},
 		})
