@@ -10,7 +10,9 @@ import (
 )
 
 func TestNewOrchestrator(t *testing.T) {
-	orch := NewOrchestrator(OrchestratorOption{})
+	orch := NewOrchestrator(OrchestratorOption{
+		Config: &config.Config{},
+	})
 	assert.NotNil(t, orch)
 }
 
@@ -67,4 +69,8 @@ func TestProcessPathToForwarderMap(t *testing.T) {
 	for _, logFilename := range []string{tmpNginxFile.Name(), tmpSyslogFile.Name()} {
 		assert.Equal(t, expected[logFilename], processedInputToForwarderMap[logFilename])
 	}
+}
+
+func TestOrchestratorCleanup(t *testing.T) {
+	// TODO
 }

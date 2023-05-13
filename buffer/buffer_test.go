@@ -25,7 +25,10 @@ func TestBufferRun(t *testing.T) {
 	var wg sync.WaitGroup
 
 	wg.Add(1)
-	b.Run(&wg, fwdChan)
+	go func() {
+		defer wg.Done()
+		b.Run(fwdChan)
+	}()
 
 	forwarded := <-fwdChan
 	assert.Equal(t, "123", forwarded)

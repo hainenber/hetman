@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
@@ -62,29 +61,26 @@ func NewForwarder(conf config.ForwarderConfig) *Forwarder {
 
 // Run sends tailed or disk-buffered logs to remote endpoints
 // Terminates once context is cancelled
-func (f *Forwarder) Run(wg *sync.WaitGroup, bufferChan chan string) {
-	go func() {
-		defer wg.Done()
-		for {
-			select {
-			case <-f.ctx.Done():
-				// Last attempt sending all consumed logs to downstream before shutdown
-				// If flush attempt failed, queue logs back to buffer
-				errors := f.Flush(bufferChan)
-				for _, err := range errors {
-					f.logger.Error().Err(err).Msg("")
-				}
-				return
-			// Send buffered logs
-			// If failed, will queue log(s) back to buffer channel for next persistence
-			case line := <-f.LogChan:
-				if err := f.forward(ForwardArg{timestamp: "", logLine: line}); err != nil {
-					f.logger.Error().Err(err).Msg("")
-					bufferChan <- line
-				}
+func (f *Forwarder) Run(bufferChan chan string) {
+	for {
+		select {
+		case <-f.ctx.Done():
+			// Last attempt sending all consumed logs to downstream before shutdown
+			// If flush attempt failed, queue logs back to buffer
+			errors := f.Flush(bufferChan)
+			for _, err := range errors {
+				f.logger.Error().Err(err).Msg("")
+			}
+			return
+		// Send buffered logs
+		// If failed, will queue log(s) back to buffer channel for next persistence
+		case line := <-f.LogChan:
+			if err := f.forward(ForwardArg{timestamp: "", logLine: line}); err != nil {
+				f.logger.Error().Err(err).Msg("")
+				bufferChan <- line
 			}
 		}
-	}()
+	}
 }
 
 // Flush all consumed messages, forwarding to remote endpoints

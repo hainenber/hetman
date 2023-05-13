@@ -63,25 +63,22 @@ func NewTailer(tailerOptions TailerOptions) (*Tailer, error) {
 }
 
 // Remember last offset from tailed file
-func (t *Tailer) Run(wg *sync.WaitGroup, buffers []*buffer.Buffer) {
-	go func() {
-		defer wg.Done()
-		for {
-			select {
-			case <-t.ctx.Done():
-				err := t.Cleanup()
-				if err != nil {
-					t.logger.Error().Err(err).Msg("")
-				}
-				// Buffer channels will stil be open to receive failed-to-forward log
-				return
-			case line := <-t.Tailer.Lines:
-				for _, b := range buffers {
-					b.BufferChan <- line.Text
-				}
+func (t *Tailer) Run(buffers []*buffer.Buffer) {
+	for {
+		select {
+		case <-t.ctx.Done():
+			err := t.Cleanup()
+			if err != nil {
+				t.logger.Error().Err(err).Msg("")
+			}
+			// Buffer channels will stil be open to receive failed-to-forward log
+			return
+		case line := <-t.Tailer.Lines:
+			for _, b := range buffers {
+				b.BufferChan <- line.Text
 			}
 		}
-	}()
+	}
 }
 
 func (t *Tailer) Cleanup() error {

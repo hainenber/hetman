@@ -45,7 +45,6 @@ func TestForwarderRun(t *testing.T) {
 		}
 		if reqCount == 1 {
 			w.WriteHeader(http.StatusInternalServerError)
-			reqCount++
 		}
 	}))
 	defer server.Close()
@@ -60,7 +59,10 @@ func TestForwarderRun(t *testing.T) {
 	}()
 
 	wg.Add(1)
-	fwd.Run(&wg, bufferChan)
+	go func() {
+		defer wg.Done()
+		fwd.Run(bufferChan)
+	}()
 	fwd.Close()
 
 	wg.Wait()

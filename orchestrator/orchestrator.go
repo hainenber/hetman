@@ -226,15 +226,24 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 			o.forwarders = append(o.forwarders, fwd)
 
 			o.wg.Add(1)
-			fwd.Run(&o.wg, fwdBuffer.BufferChan)
+			go func() {
+				defer o.wg.Done()
+				fwd.Run(fwdBuffer.BufferChan)
+			}()
 
 			o.wg.Add(1)
-			fwdBuffer.Run(&o.wg, fwd.LogChan)
+			go func() {
+				defer o.wg.Done()
+				fwdBuffer.Run(fwd.LogChan)
+			}()
 		}
 
 		o.tailers = append(o.tailers, t)
 		o.wg.Add(1)
-		t.Run(&o.wg, buffers)
+		go func() {
+			defer o.wg.Done()
+			t.Run(buffers)
+		}()
 		o.logger.Info().Msgf("Tailer for path \"%v\" is now running", t.Tailer.Filename)
 	}
 }

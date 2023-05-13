@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"os"
-	"sync"
 )
 
 type Buffer struct {
@@ -25,22 +24,19 @@ func NewBuffer(signature string) *Buffer {
 	}
 }
 
-func (b *Buffer) Run(wg *sync.WaitGroup, fwdChan chan string) {
-	go func() {
-		defer wg.Done()
-		for {
-			select {
-			case <-b.ctx.Done():
-				close(fwdChan)
-				return
-			case line := <-b.BufferChan:
-				// Try sending tailed log line to forwarder's channel
-				fwdChan <- line
-			default:
-				continue
-			}
+func (b *Buffer) Run(fwdChan chan string) {
+	for {
+		select {
+		case <-b.ctx.Done():
+			close(fwdChan)
+			return
+		case line := <-b.BufferChan:
+			// Try sending tailed log line to forwarder's channel
+			fwdChan <- line
+		default:
+			continue
 		}
-	}()
+	}
 }
 
 func (b Buffer) Close() {
