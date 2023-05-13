@@ -76,10 +76,9 @@ func (i *Input) Cleanup() error {
 	return nil
 }
 
-func (i *Input) Run(wg *sync.WaitGroup) {
+func (i *Input) Run() {
 	// Returns if target path is not glob-like
 	if i.watcher == nil {
-		wg.Done()
 		return
 	}
 
@@ -87,7 +86,6 @@ func (i *Input) Run(wg *sync.WaitGroup) {
 	// as near-concurrent occurence of these events can indicate
 	// a "created"-typed log rotation
 	go func() {
-		defer wg.Done()
 		for {
 			select {
 			case <-i.ctx.Done():

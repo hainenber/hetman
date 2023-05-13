@@ -114,7 +114,10 @@ func (o *Orchestrator) Run() struct{} {
 			o.logger.Fatal().Err(err).Msg("")
 		}
 		o.wg.Add(1)
-		i.Run(&o.wg) // No op if path args is not glob-like
+		go func() {
+			defer o.wg.Done()
+			i.Run() // No op if path args is not glob-like
+		}()
 		o.logger.Info().Msgf("Input %v is running", path)
 		o.inputs = append(o.inputs, i)
 
