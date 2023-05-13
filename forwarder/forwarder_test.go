@@ -2,14 +2,21 @@ package forwarder
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hainenber/hetman/config"
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 )
+
+func generateMockForwarderDestination(handlerFunc func(w http.ResponseWriter, r *http.Request)) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(handlerFunc))
+}
 
 func prepareTestForwarder(urlOverride string) *Forwarder {
 	fwdCfg := config.ForwarderConfig{
@@ -30,44 +37,99 @@ func TestNewForwarder(t *testing.T) {
 }
 
 func TestForwarderRun(t *testing.T) {
-	var (
-		reqCount int
-		wg       sync.WaitGroup
-	)
+	t.Run("successfully send 2 log lines, un-batched", func(t *testing.T) {
+		var (
+			reqCount int
+			wg       sync.WaitGroup
+		)
+		server := generateMockForwarderDestination(func(w http.ResponseWriter, r *http.Request) {
+			payload := Payload{}
+			if reqCount == 0 {
+				json.NewDecoder(r.Body).Decode(&payload)
+				assert.Contains(t, payload.Streams[0].Values[0], "success")
+				reqCount++
+				return
+			}
+			if reqCount == 1 {
+				w.WriteHeader(http.StatusInternalServerError)
+			}
+		})
+		defer server.Close()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		payload := Payload{}
-		if reqCount == 0 {
-			json.NewDecoder(r.Body).Decode(&payload)
-			assert.Contains(t, payload.Streams[0].Values[0], "success")
-			reqCount++
-			return
-		}
-		if reqCount == 1 {
-			w.WriteHeader(http.StatusInternalServerError)
-		}
-	}))
-	defer server.Close()
+		fwd := prepareTestForwarder(server.URL)
+		bufferChan := make(chan string, 1)
 
-	fwd := prepareTestForwarder(server.URL)
-	bufferChan := make(chan string, 1)
+		go func() {
+			fwd.LogChan <- "success"
+			fwd.LogChan <- "failed"
+			close(fwd.LogChan)
+		}()
 
-	go func() {
-		fwd.LogChan <- "success"
-		fwd.LogChan <- "failed"
-		close(fwd.LogChan)
-	}()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fwd.Run(bufferChan)
+		}()
+		fwd.Close()
+		wg.Wait()
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		fwd.Run(bufferChan)
-	}()
-	fwd.Close()
+		assert.Equal(t, "failed", <-bufferChan)
+	})
 
-	wg.Wait()
+	t.Run("successfully send 20 log lines, batched", func(t *testing.T) {
+		var (
+			reqCount int
+			wg       sync.WaitGroup
+		)
+		server := generateMockForwarderDestination(func(w http.ResponseWriter, r *http.Request) {
+			assertDecodedPayload := func(expectedPayload []string) {
+				payload := Payload{}
+				json.NewDecoder(r.Body).Decode(&payload)
+				batch := lo.Map(payload.Streams[0].Values, func(x []string, index int) string {
+					return x[1]
+				})
+				assert.Equal(t, expectedPayload, batch)
+				reqCount++
+			}
+			switch reqCount {
+			case 0:
+				assertDecodedPayload([]string{"0", "1", "2", "3", "4"})
+			case 1:
+				assertDecodedPayload([]string{"5", "6", "7", "8"})
+			case 2:
+				assertDecodedPayload([]string{"9", "10", "11"})
+			case 3:
+				assertDecodedPayload([]string{"12", "13", "14", "15", "16", "17", "18", "19"})
+			}
+		})
+		defer func() {
+			server.Close()
+			assert.Equal(t, 4, reqCount)
+		}()
 
-	assert.Equal(t, "failed", <-bufferChan)
+		fwd := prepareTestForwarder(server.URL)
+
+		go func() {
+			for i := range make([]bool, 20) {
+				fwd.LogChan <- fmt.Sprint(i)
+			}
+			close(fwd.LogChan)
+		}()
+
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			fwd.Run(make(chan string, 1024))
+		}()
+		go func() {
+			defer wg.Done()
+			time.Sleep(2 * time.Second)
+			fwd.Close()
+		}()
+
+		wg.Wait()
+
+	})
 }
 
 func TestForwarderFlush(t *testing.T) {
@@ -156,4 +218,5 @@ func TestForward(t *testing.T) {
 		assert.NotNil(t, err)
 		assert.GreaterOrEqual(t, 5, failedReqCount)
 	})
+
 }

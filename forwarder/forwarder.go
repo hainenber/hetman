@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"time"
@@ -38,6 +39,7 @@ type Forwarder struct {
 	LogChan    chan string             // Channel to receive logs from buffer stage
 	Signature  string
 	logger     zerolog.Logger
+	ticker     *time.Ticker
 }
 
 func NewForwarder(conf config.ForwarderConfig) *Forwarder {
@@ -53,9 +55,12 @@ func NewForwarder(conf config.ForwarderConfig) *Forwarder {
 		cancelFunc: cancelFunc,
 		conf:       &conf,
 		httpClient: &http.Client{},
-		LogChan:    make(chan string),
-		logger:     zerolog.New(os.Stdout),
-		Signature:  conf.CreateForwarderSignature(),
+		// TODO: Make this configurable by user input
+		LogChan:   make(chan string, 1024),
+		logger:    zerolog.New(os.Stdout),
+		Signature: conf.CreateForwarderSignature(),
+		// TODO: Make this configurable by user input
+		ticker: time.NewTicker(500 * time.Millisecond),
 	}
 }
 
@@ -72,15 +77,36 @@ func (f *Forwarder) Run(bufferChan chan string) {
 				f.logger.Error().Err(err).Msg("")
 			}
 			return
-		// Send buffered logs
+		// Send buffered logs in batch
 		// If failed, will queue log(s) back to buffer channel for next persistence
-		case line := <-f.LogChan:
-			if err := f.forward(ForwardArg{timestamp: "", logLine: line}); err != nil {
+		case <-f.ticker.C:
+			batchSize := f.getBatchSize()
+			batch := make([]ForwardArg, batchSize)
+			for i := range batch {
+				// TODO: timestamp should be filled right after tailing, not until start forwarding
+				batch[i] = ForwardArg{timestamp: "", logLine: <-f.LogChan}
+			}
+			if err := f.forward(batch...); err != nil {
 				f.logger.Error().Err(err).Msg("")
-				bufferChan <- line
+				for _, line := range batch {
+					bufferChan <- line.logLine
+				}
 			}
 		}
 	}
+}
+
+func (f *Forwarder) getBatchSize() int {
+	currentLogChanSize := len(f.LogChan)
+
+	// Returns whole value if lower than 10
+	if currentLogChanSize < 10 {
+		return currentLogChanSize
+	}
+
+	// Only send 25% of entire buffered logs
+	// TODO: Make this configurable
+	return int(math.Round(float64(currentLogChanSize) * 0.25))
 }
 
 // Flush all consumed messages, forwarding to remote endpoints
@@ -119,7 +145,6 @@ func (f *Forwarder) forward(forwardArgs ...ForwardArg) error {
 	// TODO: Allow exponential backoff configurable via user's config
 	innerForwardFunc := func() error {
 		// Fetch tags from config
-		// TODO: Send logs in batches
 		payload, err := json.Marshal(Payload{
 			Streams: []PayloadStream{
 				{
