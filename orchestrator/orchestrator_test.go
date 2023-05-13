@@ -10,8 +10,14 @@ import (
 )
 
 func TestNewOrchestrator(t *testing.T) {
+	tmpRegistryDir, _ := os.MkdirTemp("", "")
+	defer os.RemoveAll(tmpRegistryDir)
 	orch := NewOrchestrator(OrchestratorOption{
-		Config: &config.Config{},
+		Config: &config.Config{
+			GlobalConfig: config.GlobalConfig{
+				RegistryDir: tmpRegistryDir,
+			},
+		},
 	})
 	assert.NotNil(t, orch)
 }
