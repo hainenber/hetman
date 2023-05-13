@@ -8,6 +8,7 @@ lint:
 
 run:
 	rm -rf ./bin
+	truncate -s 0 testdata/hetman.registry.json 
 	mkdir ./bin
 	go build -o bin ./cmd/hetman
 	./bin/hetman
