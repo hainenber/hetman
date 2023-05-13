@@ -11,7 +11,6 @@ type Buffer struct {
 	cancelFunc context.CancelFunc // Context cancellation function
 	BufferChan chan string        // Channel that store un-delivered logs, waiting to be either resend or persisted to disk
 	signature  string             // A buffer's signature, maded by hashing of forwarder's targets associative tag key-value pairs
-
 }
 
 func NewBuffer(signature string) *Buffer {
@@ -30,8 +29,9 @@ func (b *Buffer) Run(fwdChan chan string) {
 		case <-b.ctx.Done():
 			close(fwdChan)
 			return
+		// If received scraped logs from tailer,
+		// store tailed log line to forwarder's channel
 		case line := <-b.BufferChan:
-			// Try sending tailed log line to forwarder's channel
 			fwdChan <- line
 		default:
 			continue
