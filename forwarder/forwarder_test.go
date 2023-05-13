@@ -32,7 +32,7 @@ func prepareTestForwarder(urlOverride string) *Forwarder {
 func TestNewForwarder(t *testing.T) {
 	fwd := prepareTestForwarder("")
 	assert.NotNil(t, fwd)
-	assert.Equal(t, 0, cap(fwd.LogChan))
+	assert.Equal(t, 1024, cap(fwd.LogChan))
 	assert.Equal(t, "687474703a2f2f6c6f63616c686f73743a38303838666f6f626172", fwd.Signature)
 }
 
