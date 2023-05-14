@@ -4,9 +4,9 @@ test:
 
 lint:
 	go fmt ./...
-	go test -v ./...
+	go test -cover ./...
 
-run:
+run: lint
 	rm -rf ./bin
 	truncate -s 0 testdata/hetman.registry.json 
 	mkdir ./bin
