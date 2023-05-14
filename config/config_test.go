@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -80,12 +82,57 @@ func TestDetectDuplicateTargetID(t *testing.T) {
 }
 
 func TestProcess(t *testing.T) {
-	conf, _, tmpDir := prepareTestConfig()
-	defer cleanup(tmpDir)
-	_, err := conf.Process()
-	if err != nil {
-		t.Errorf("expect nil, got %v", err)
-	}
+	t.Parallel()
+	t.Run("successfully process placeholder config", func(t *testing.T) {
+		conf, _, tmpDir := prepareTestConfig()
+		defer cleanup(tmpDir)
+		_, err := conf.Process()
+		assert.Nil(t, err)
+	})
+	t.Run("successfully process config with readied downstream", func(t *testing.T) {
+		testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+		defer testServer.Close()
+		conf, _, tmpDir := prepareTestConfig()
+		defer cleanup(tmpDir)
+		conf.Targets[0].Forwarders = []ForwarderConfig{
+			{URL: testServer.URL + "/loki/v1/api/push"},
+		}
+		processed, err := conf.Process()
+		assert.NotNil(t, processed)
+		assert.Nil(t, err)
+	})
+	t.Run("failed to process config with not-readied Loki downstream", func(t *testing.T) {
+		testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer testServer.Close()
+		conf, _, tmpDir := prepareTestConfig()
+		defer cleanup(tmpDir)
+		conf.Targets[0].Forwarders = []ForwarderConfig{
+			{URL: testServer.URL + "/loki/v1/api/push"},
+		}
+		processed, err := conf.Process()
+		assert.Nil(t, processed)
+		assert.NotNil(t, err)
+	})
+}
+
+func TestProbeReadiness(t *testing.T) {
+	t.Parallel()
+	t.Run("successfully probe readiness of Loki service", func(t *testing.T) {
+		testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+		defer testServer.Close()
+		err := probeReadiness(testServer.URL+"/loki/v1/api/push", "/ready")
+		assert.Nil(t, err)
+	})
+	t.Run("failed to probe readiness of Loki service", func(t *testing.T) {
+		testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer testServer.Close()
+		err := probeReadiness(testServer.URL+"/loki/v1/api/push", "/ready")
+		assert.NotNil(t, err)
+	})
 }
 
 func TestCreateForwarderSignature(t *testing.T) {

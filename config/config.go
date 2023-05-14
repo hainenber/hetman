@@ -2,6 +2,9 @@ package config
 
 import (
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -75,6 +78,29 @@ func (c Config) DetectDuplicateTargetID() error {
 	return nil
 }
 
+// probeReadiness checks readiness of downstream services via a dedicated path for healthcheck
+func probeReadiness(fwdUrl string, readinessPath string) error {
+	parsedUrl, err := url.Parse(fwdUrl)
+	if err != nil {
+		return err
+	}
+	parsedUrl.RawPath = readinessPath
+	resp, err := http.Get(parsedUrl.String())
+	if err != nil {
+		return err
+	}
+	if resp != nil && resp.Body != nil {
+		defer resp.Body.Close()
+		if _, err = io.Copy(io.Discard, resp.Body); err != nil {
+			return err
+		}
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	return fmt.Errorf("can't probe readiness for %v", fwdUrl)
+}
+
 // Process performs baseline config check and generate path-to-forwarder map
 func (c Config) Process() (map[string][]ForwarderConfig, error) {
 	// Prevent duplicate ID of targets
@@ -102,11 +128,18 @@ func (c Config) Process() (map[string][]ForwarderConfig, error) {
 	}
 
 	// Ensure none of forwarder's URL are empty
+	// Probe readiness for downstream services
+	// TODO: add readiness probe for other popular downstreams as well
 	for _, target := range c.Targets {
 		for _, fwd := range target.Forwarders {
 			if fwd.URL == "" {
 				err = fmt.Errorf("empty forwarder's URL config for target %s", target.Id)
 				return nil, err
+			}
+			if strings.Contains(fwd.URL, "/loki") {
+				if err = probeReadiness(fwd.URL, "/ready"); err != nil {
+					return nil, err
+				}
 			}
 		}
 	}
