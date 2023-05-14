@@ -80,3 +80,7 @@ func TestProcessPathToForwarderMap(t *testing.T) {
 func TestOrchestratorCleanup(t *testing.T) {
 	// TODO
 }
+
+func TestOrchestratorRun(t *testing.T) {
+	// TODO
+}

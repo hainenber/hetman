@@ -5,12 +5,14 @@ import (
 	"context"
 	"os"
 	"time"
+
+	"github.com/hainenber/hetman/pipeline"
 )
 
 type Buffer struct {
 	ctx        context.Context    // Context for forwarder struct, primarily for cancellation when needed
 	cancelFunc context.CancelFunc // Context cancellation function
-	BufferChan chan string        // Channel that store un-delivered logs, waiting to be either resend or persisted to disk
+	BufferChan chan pipeline.Data // Channel that store un-delivered logs, waiting to be either resend or persisted to disk
 	signature  string             // A buffer's signature, maded by hashing of forwarder's targets associative tag key-value pairs
 	ticker     *time.Ticker
 }
@@ -20,14 +22,14 @@ func NewBuffer(signature string) *Buffer {
 	return &Buffer{
 		ctx:        ctx,
 		cancelFunc: cancelFunc,
-		BufferChan: make(chan string, 1024),
+		BufferChan: make(chan pipeline.Data, 1024),
 		signature:  signature,
 		// TODO: Make this configurable by user input
 		ticker: time.NewTicker(500 * time.Millisecond),
 	}
 }
 
-func (b *Buffer) Run(fwdChan chan string) {
+func (b *Buffer) Run(fwdChan chan pipeline.Data) {
 	var lastLogTime time.Time
 	for {
 		select {
@@ -44,7 +46,7 @@ func (b *Buffer) Run(fwdChan chan string) {
 		case <-b.ticker.C:
 			// TODO: Make this configurable
 			if time.Since(lastLogTime) > time.Duration(1*time.Second) {
-				fwdChan <- b.signature
+				fwdChan <- pipeline.Data{LogLine: b.signature}
 			}
 		default:
 			continue
@@ -83,7 +85,7 @@ func (b Buffer) PersistToDisk() (string, error) {
 
 	for len(b.BufferChan) > 0 {
 		line := <-b.BufferChan
-		if _, err := f.WriteString(line); err != nil {
+		if _, err := f.WriteString(line.LogLine); err != nil {
 			return "", err
 		}
 	}
@@ -106,7 +108,7 @@ func (b Buffer) LoadPersistedLogs(filename string) error {
 	// Unload disk-buffered logs into channel for re-delivery
 	for fileScanner.Scan() {
 		bufferedLine := fileScanner.Text()
-		b.BufferChan <- bufferedLine
+		b.BufferChan <- pipeline.Data{LogLine: bufferedLine}
 	}
 
 	// Clean up previously temp file used for persistence as offloading has finished

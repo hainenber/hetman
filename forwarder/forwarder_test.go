@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hainenber/hetman/config"
+	"github.com/hainenber/hetman/pipeline"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 )
@@ -58,11 +59,11 @@ func TestForwarderRun(t *testing.T) {
 		defer server.Close()
 
 		fwd := prepareTestForwarder(server.URL)
-		bufferChan := make(chan string, 1)
+		bufferChan := make(chan pipeline.Data, 1)
 
 		go func() {
-			fwd.LogChan <- "success"
-			fwd.LogChan <- "failed"
+			fwd.LogChan <- pipeline.Data{LogLine: "success"}
+			fwd.LogChan <- pipeline.Data{LogLine: "failed"}
 			close(fwd.LogChan)
 		}()
 
@@ -74,7 +75,7 @@ func TestForwarderRun(t *testing.T) {
 		fwd.Close()
 		wg.Wait()
 
-		assert.Equal(t, "failed", <-bufferChan)
+		assert.Equal(t, pipeline.Data{LogLine: "failed"}, <-bufferChan)
 	})
 
 	t.Run("successfully send 100 log lines, batched", func(t *testing.T) {
@@ -112,7 +113,7 @@ func TestForwarderRun(t *testing.T) {
 
 		go func() {
 			for i := range make([]bool, 100) {
-				fwd.LogChan <- fmt.Sprint(i)
+				fwd.LogChan <- pipeline.Data{LogLine: fmt.Sprint(i)}
 			}
 			close(fwd.LogChan)
 		}()
@@ -120,7 +121,7 @@ func TestForwarderRun(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			fwd.Run(make(chan string, 1024))
+			fwd.Run(make(chan pipeline.Data, 1024))
 		}()
 		go func() {
 			defer wg.Done()
@@ -151,17 +152,17 @@ func TestForwarderFlush(t *testing.T) {
 	defer server.Close()
 
 	fwd := prepareTestForwarder(server.URL)
-	bufferChan := make(chan string, 1)
+	bufferChan := make(chan pipeline.Data, 1)
 
 	go func() {
-		fwd.LogChan <- "success"
-		fwd.LogChan <- "failed"
+		fwd.LogChan <- pipeline.Data{LogLine: "success"}
+		fwd.LogChan <- pipeline.Data{LogLine: "failed"}
 		close(fwd.LogChan)
 	}()
 
 	errors := fwd.Flush(bufferChan)
 	assert.Len(t, errors, 1)
-	assert.Equal(t, "failed", <-bufferChan)
+	assert.Equal(t, pipeline.Data{LogLine: "failed"}, <-bufferChan)
 }
 
 func TestForward(t *testing.T) {
@@ -198,16 +199,16 @@ func TestForward(t *testing.T) {
 
 	t.Run("successfully forward 1 line of log", func(t *testing.T) {
 		fwd := prepareTestForwarder(server.URL)
-		err := fwd.forward(ForwardArg{timestamp: "123", logLine: "success abc"})
+		err := fwd.forward(pipeline.Data{Timestamp: "123", LogLine: "success abc"})
 		assert.Nil(t, err)
 	})
 
 	t.Run("sucessfully ship multiple lines of log", func(t *testing.T) {
 		fwd := prepareTestForwarder(server.URL)
-		logPayload := []ForwardArg{
-			{"1", "success def1"},
-			{"2", "success def2"},
-			{"3", "success def3"},
+		logPayload := []pipeline.Data{
+			{Timestamp: "1", LogLine: "success def1"},
+			{Timestamp: "2", LogLine: "success def2"},
+			{Timestamp: "3", LogLine: "success def3"},
 		}
 		err := fwd.forward(logPayload...)
 		assert.Nil(t, err)
@@ -215,7 +216,7 @@ func TestForward(t *testing.T) {
 
 	t.Run("failed to forward 1 line of log", func(t *testing.T) {
 		fwd := prepareTestForwarder(failedServer.URL)
-		err := fwd.forward(ForwardArg{timestamp: "1", logLine: "failed abc"})
+		err := fwd.forward(pipeline.Data{Timestamp: "1", LogLine: "failed abc"})
 		assert.NotNil(t, err)
 		assert.GreaterOrEqual(t, 5, failedReqCount)
 	})

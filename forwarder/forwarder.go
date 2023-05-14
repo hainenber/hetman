@@ -12,17 +12,13 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/hainenber/hetman/config"
+	"github.com/hainenber/hetman/pipeline"
 	"github.com/rs/zerolog"
 )
 
 const (
 	DEFAULT_BATCH_SIZE = 50
 )
-
-type ForwardArg struct {
-	timestamp string
-	logLine   string
-}
 
 type PayloadStream struct {
 	Stream map[string]string `json:"stream"`
@@ -39,7 +35,7 @@ type Forwarder struct {
 	cancelFunc context.CancelFunc      // Context cancellation function
 	conf       *config.ForwarderConfig // Forwarder's config
 	httpClient *http.Client            // Forwarder's reusable HTTP client
-	LogChan    chan string             // Channel to receive logs from buffer stage
+	LogChan    chan pipeline.Data      // Channel to receive logs from buffer stage
 	Signature  string
 	logger     zerolog.Logger
 }
@@ -58,7 +54,7 @@ func NewForwarder(conf config.ForwarderConfig) *Forwarder {
 		conf:       &conf,
 		httpClient: &http.Client{},
 		// TODO: Make this configurable by user input
-		LogChan:   make(chan string, 1024),
+		LogChan:   make(chan pipeline.Data, 1024),
 		logger:    zerolog.New(os.Stdout),
 		Signature: conf.CreateForwarderSignature(),
 	}
@@ -66,8 +62,8 @@ func NewForwarder(conf config.ForwarderConfig) *Forwarder {
 
 // Run sends tailed or disk-buffered logs to remote endpoints
 // Terminates once context is cancelled
-func (f *Forwarder) Run(bufferChan chan string) {
-	var batch []ForwardArg
+func (f *Forwarder) Run(bufferChan chan pipeline.Data) {
+	var batch []pipeline.Data
 	for {
 		select {
 		case <-f.ctx.Done():
@@ -80,27 +76,26 @@ func (f *Forwarder) Run(bufferChan chan string) {
 			return
 		// Send buffered logs in batch
 		// If failed, will queue log(s) back to buffer channel for next persistence
-		case logLine := <-f.LogChan:
-			if logLine == f.Signature {
+		case line := <-f.LogChan:
+			if line.LogLine == f.Signature {
 				continue
 			}
 			// In case received log isn't offset, set into batch
-			batch = append(batch, ForwardArg{timestamp: "", logLine: logLine})
+			batch = append(batch, line)
 			for i := 1; i < f.computeBatchSize(); i++ {
-				// TODO: timestamp should be filled right after tailing, not until start forwarding
 				logLine := <-f.LogChan
-				if logLine == f.Signature {
+				if logLine.LogLine == f.Signature {
 					break
 				}
-				batch = append(batch, ForwardArg{timestamp: "", logLine: logLine})
+				batch = append(batch, logLine)
 			}
 			if err := f.forward(batch...); err != nil {
 				f.logger.Error().Err(err).Msg("")
-				for _, line := range batch {
-					bufferChan <- line.logLine
+				for _, pipelineData := range batch {
+					bufferChan <- pipelineData
 				}
 			}
-			batch = []ForwardArg{}
+			batch = []pipeline.Data{}
 		default:
 			continue
 		}
@@ -112,10 +107,10 @@ func (f *Forwarder) computeBatchSize() int {
 }
 
 // Flush all consumed messages, forwarding to remote endpoints
-func (f *Forwarder) Flush(bufferChan chan string) []error {
+func (f *Forwarder) Flush(bufferChan chan pipeline.Data) []error {
 	var errors []error
 	for line := range f.LogChan {
-		if err := f.forward(ForwardArg{timestamp: "", logLine: line}); err != nil {
+		if err := f.forward(line); err != nil {
 			errors = append(errors, err)
 			bufferChan <- line
 		}
@@ -130,16 +125,16 @@ func (f *Forwarder) Close() {
 
 // TODO: Generalize this method to send logs to other downstream log consumers
 // Only support Loki atm
-func (f *Forwarder) forward(forwardArgs ...ForwardArg) error {
+func (f *Forwarder) forward(forwardArgs ...pipeline.Data) error {
 	// Initialize timestamp in case not present in args
 	// Setting up log payload
 	payload := make([][]string, len(forwardArgs))
 	for i, arg := range forwardArgs {
-		sentTime := arg.timestamp
+		sentTime := arg.Timestamp
 		if sentTime == "" {
 			sentTime = fmt.Sprint(time.Now().UnixNano())
 		}
-		payload[i] = []string{sentTime, arg.logLine}
+		payload[i] = []string{sentTime, arg.LogLine}
 	}
 
 	// Wrap sections of making HTTP request to downstream and process response

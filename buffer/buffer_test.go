@@ -5,6 +5,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/hainenber/hetman/pipeline"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -20,8 +21,8 @@ func TestNewBuffer(t *testing.T) {
 
 func TestBufferRun(t *testing.T) {
 	b := NewBuffer("abc")
-	fwdChan := make(chan string)
-	b.BufferChan <- "123"
+	fwdChan := make(chan pipeline.Data)
+	b.BufferChan <- pipeline.Data{LogLine: "123"}
 	var wg sync.WaitGroup
 
 	wg.Add(1)
@@ -31,7 +32,7 @@ func TestBufferRun(t *testing.T) {
 	}()
 
 	forwarded := <-fwdChan
-	assert.Equal(t, "123", forwarded)
+	assert.Equal(t, pipeline.Data{LogLine: "123"}, forwarded)
 
 	b.Close()
 	wg.Wait()
@@ -44,7 +45,7 @@ func TestGetSignature(t *testing.T) {
 
 func TestPersistToDisk(t *testing.T) {
 	b := NewBuffer("abc")
-	b.BufferChan <- "123"
+	b.BufferChan <- pipeline.Data{LogLine: "123"}
 
 	bufFile, err := b.PersistToDisk()
 	assert.Nil(t, err)
@@ -58,7 +59,7 @@ func TestPersistToDisk(t *testing.T) {
 
 func TestLoadPersistedLogs(t *testing.T) {
 	b := NewBuffer("abc")
-	b.BufferChan <- "123"
+	b.BufferChan <- pipeline.Data{LogLine: "123"}
 
 	bufFile, err := b.PersistToDisk()
 	assert.Nil(t, err)
@@ -69,5 +70,5 @@ func TestLoadPersistedLogs(t *testing.T) {
 	assert.NoFileExists(t, bufFile)
 
 	persisted := <-b.BufferChan
-	assert.Equal(t, "123", persisted)
+	assert.Equal(t, pipeline.Data{LogLine: "123"}, persisted)
 }
