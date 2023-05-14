@@ -84,7 +84,7 @@ func probeReadiness(fwdUrl string, readinessPath string) error {
 	if err != nil {
 		return err
 	}
-	parsedUrl.RawPath = readinessPath
+	parsedUrl.Path = readinessPath
 	resp, err := http.Get(parsedUrl.String())
 	if err != nil {
 		return err
