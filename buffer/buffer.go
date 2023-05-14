@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"os"
+	"time"
 )
 
 type Buffer struct {
@@ -11,6 +12,7 @@ type Buffer struct {
 	cancelFunc context.CancelFunc // Context cancellation function
 	BufferChan chan string        // Channel that store un-delivered logs, waiting to be either resend or persisted to disk
 	signature  string             // A buffer's signature, maded by hashing of forwarder's targets associative tag key-value pairs
+	ticker     *time.Ticker
 }
 
 func NewBuffer(signature string) *Buffer {
@@ -20,10 +22,13 @@ func NewBuffer(signature string) *Buffer {
 		cancelFunc: cancelFunc,
 		BufferChan: make(chan string, 1024),
 		signature:  signature,
+		// TODO: Make this configurable by user input
+		ticker: time.NewTicker(500 * time.Millisecond),
 	}
 }
 
 func (b *Buffer) Run(fwdChan chan string) {
+	var lastLogTime time.Time
 	for {
 		select {
 		case <-b.ctx.Done():
@@ -33,6 +38,14 @@ func (b *Buffer) Run(fwdChan chan string) {
 		// store tailed log line to forwarder's channel
 		case line := <-b.BufferChan:
 			fwdChan <- line
+			lastLogTime = time.Now()
+		// Send offset to forwarder's channel if the time since last log is longer
+		// than a threshold
+		case <-b.ticker.C:
+			// TODO: Make this configurable
+			if time.Since(lastLogTime) > time.Duration(1*time.Second) {
+				fwdChan <- b.signature
+			}
 		default:
 			continue
 		}

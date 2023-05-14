@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"os"
 	"time"
@@ -14,6 +13,10 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/hainenber/hetman/config"
 	"github.com/rs/zerolog"
+)
+
+const (
+	DEFAULT_BATCH_SIZE = 50
 )
 
 type ForwardArg struct {
@@ -39,7 +42,6 @@ type Forwarder struct {
 	LogChan    chan string             // Channel to receive logs from buffer stage
 	Signature  string
 	logger     zerolog.Logger
-	ticker     *time.Ticker
 }
 
 func NewForwarder(conf config.ForwarderConfig) *Forwarder {
@@ -59,14 +61,13 @@ func NewForwarder(conf config.ForwarderConfig) *Forwarder {
 		LogChan:   make(chan string, 1024),
 		logger:    zerolog.New(os.Stdout),
 		Signature: conf.CreateForwarderSignature(),
-		// TODO: Make this configurable by user input
-		ticker: time.NewTicker(500 * time.Millisecond),
 	}
 }
 
 // Run sends tailed or disk-buffered logs to remote endpoints
 // Terminates once context is cancelled
 func (f *Forwarder) Run(bufferChan chan string) {
+	var batch []ForwardArg
 	for {
 		select {
 		case <-f.ctx.Done():
@@ -79,12 +80,19 @@ func (f *Forwarder) Run(bufferChan chan string) {
 			return
 		// Send buffered logs in batch
 		// If failed, will queue log(s) back to buffer channel for next persistence
-		case <-f.ticker.C:
-			batchSize := f.getBatchSize()
-			batch := make([]ForwardArg, batchSize)
-			for i := range batch {
+		case logLine := <-f.LogChan:
+			if logLine == f.Signature {
+				continue
+			}
+			// In case received log isn't offset, set into batch
+			batch = append(batch, ForwardArg{timestamp: "", logLine: logLine})
+			for i := 1; i < f.computeBatchSize(); i++ {
 				// TODO: timestamp should be filled right after tailing, not until start forwarding
-				batch[i] = ForwardArg{timestamp: "", logLine: <-f.LogChan}
+				logLine := <-f.LogChan
+				if logLine == f.Signature {
+					break
+				}
+				batch = append(batch, ForwardArg{timestamp: "", logLine: logLine})
 			}
 			if err := f.forward(batch...); err != nil {
 				f.logger.Error().Err(err).Msg("")
@@ -92,21 +100,15 @@ func (f *Forwarder) Run(bufferChan chan string) {
 					bufferChan <- line.logLine
 				}
 			}
+			batch = []ForwardArg{}
+		default:
+			continue
 		}
 	}
 }
 
-func (f *Forwarder) getBatchSize() int {
-	currentLogChanSize := len(f.LogChan)
-
-	// Returns whole value if lower than 10
-	if currentLogChanSize < 10 {
-		return currentLogChanSize
-	}
-
-	// Only send 25% of entire buffered logs
-	// TODO: Make this configurable
-	return int(math.Round(float64(currentLogChanSize) * 0.25))
+func (f *Forwarder) computeBatchSize() int {
+	return DEFAULT_BATCH_SIZE
 }
 
 // Flush all consumed messages, forwarding to remote endpoints

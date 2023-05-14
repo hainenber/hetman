@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -76,7 +77,7 @@ func TestForwarderRun(t *testing.T) {
 		assert.Equal(t, "failed", <-bufferChan)
 	})
 
-	t.Run("successfully send 20 log lines, batched", func(t *testing.T) {
+	t.Run("successfully send 100 log lines, batched", func(t *testing.T) {
 		var (
 			reqCount int
 			wg       sync.WaitGroup
@@ -93,24 +94,24 @@ func TestForwarderRun(t *testing.T) {
 			}
 			switch reqCount {
 			case 0:
-				assertDecodedPayload([]string{"0", "1", "2", "3", "4"})
+				assertDecodedPayload(lo.Map(make([]string, 50), func(x string, index int) string {
+					return strconv.FormatInt(int64(index), 10)
+				}))
 			case 1:
-				assertDecodedPayload([]string{"5", "6", "7", "8"})
-			case 2:
-				assertDecodedPayload([]string{"9", "10", "11"})
-			case 3:
-				assertDecodedPayload([]string{"12", "13", "14", "15", "16", "17", "18", "19"})
+				assertDecodedPayload(lo.Map(make([]string, 50), func(x string, index int) string {
+					return strconv.FormatInt(int64(index+50), 10)
+				}))
 			}
 		})
 		defer func() {
 			server.Close()
-			assert.Equal(t, 4, reqCount)
+			assert.Equal(t, 2, reqCount)
 		}()
 
 		fwd := prepareTestForwarder(server.URL)
 
 		go func() {
-			for i := range make([]bool, 20) {
+			for i := range make([]bool, 100) {
 				fwd.LogChan <- fmt.Sprint(i)
 			}
 			close(fwd.LogChan)
