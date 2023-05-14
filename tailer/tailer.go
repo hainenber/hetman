@@ -2,11 +2,14 @@ package tailer
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/hainenber/hetman/buffer"
+	"github.com/hainenber/hetman/pipeline"
 	"github.com/nxadm/tail"
 	"github.com/rs/zerolog"
 )
@@ -75,7 +78,7 @@ func (t *Tailer) Run(buffers []*buffer.Buffer) {
 			return
 		case line := <-t.Tailer.Lines:
 			for _, b := range buffers {
-				b.BufferChan <- line.Text
+				b.BufferChan <- pipeline.Data{Timestamp: fmt.Sprint(time.Now().UnixNano()), LogLine: line.Text}
 			}
 		}
 	}
