@@ -42,7 +42,7 @@ func (b *Buffer) Run(fwdChan chan pipeline.Data) {
 			fwdChan <- line
 			lastLogTime = time.Now()
 		// Send offset to forwarder's channel if the time since last log is longer
-		// than a threshold
+		// than specific threshold
 		case <-b.ticker.C:
 			// TODO: Make this configurable
 			if time.Since(lastLogTime) > time.Duration(1*time.Second) {

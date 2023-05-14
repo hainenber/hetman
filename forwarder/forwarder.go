@@ -2,6 +2,7 @@ package forwarder
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -53,10 +54,9 @@ func NewForwarder(conf config.ForwarderConfig) *Forwarder {
 		cancelFunc: cancelFunc,
 		conf:       &conf,
 		httpClient: &http.Client{},
-		// TODO: Make this configurable by user input
-		LogChan:   make(chan pipeline.Data, 1024),
-		logger:    zerolog.New(os.Stdout),
-		Signature: conf.CreateForwarderSignature(),
+		LogChan:    make(chan pipeline.Data, 1024),
+		logger:     zerolog.New(os.Stdout),
+		Signature:  conf.CreateForwarderSignature(),
 	}
 }
 
@@ -153,15 +153,30 @@ func (f *Forwarder) forward(forwardArgs ...pipeline.Data) error {
 		if err != nil {
 			return err
 		}
+		bufferedPayload := bytes.NewBuffer(payload)
+
+		// If enabled, compress payload before sending
+		if f.conf.CompressRequest {
+			bufferedPayload = new(bytes.Buffer)
+			gzipWriter := gzip.NewWriter(bufferedPayload)
+			gzipWriter.Write(payload)
+			gzipWriter.Close()
+		}
 
 		// Initialize POST request to log servers
 		// Since we're sending data as JSON data, the header must be set as well
-		req, err := http.NewRequest(http.MethodPost, f.conf.URL, bytes.NewBuffer(payload))
+		req, err := http.NewRequest(http.MethodPost, f.conf.URL, bufferedPayload)
 		if err != nil {
 			return err
 		}
-		req.Header.Add("Content-Type", "application/json")
 
+		// Set approriate header(s)
+		req.Header.Set("Content-Type", "application/json")
+		if f.conf.CompressRequest {
+			req.Header.Set("Content-Encoding", "gzip")
+		}
+
+		// Send the payload
 		resp, err := f.httpClient.Do(req)
 		if err == nil && resp.StatusCode >= 400 {
 			err = fmt.Errorf("unexpected status code from log server: %v", resp.StatusCode)

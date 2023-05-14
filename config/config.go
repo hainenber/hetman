@@ -16,8 +16,9 @@ import (
 )
 
 type ForwarderConfig struct {
-	URL     string            `koanf:"url"`
-	AddTags map[string]string `koanf:"add_tags"`
+	URL             string            `koanf:"url"`
+	AddTags         map[string]string `koanf:"add_tags"`
+	CompressRequest bool              `koanf:"compress_request"`
 }
 
 type TargetConfig struct {

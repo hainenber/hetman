@@ -1,6 +1,7 @@
 package forwarder
 
 import (
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -171,21 +172,21 @@ func TestForward(t *testing.T) {
 	// Always successful server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		payload := Payload{}
-
-		if reqCount == 0 {
+		switch reqCount {
+		case 0:
 			json.NewDecoder(r.Body).Decode(&payload)
 			assert.Equal(t, []string{"123", "success abc"}, payload.Streams[0].Values[0])
-			reqCount++
-			return
-		}
+		case 1:
+			json.NewDecoder(r.Body).Decode(&payload)
+			assert.Len(t, payload.Streams[0].Values, 3)
+			assert.Equal(t, [][]string{
+				{"1", "success def1"},
+				{"2", "success def2"},
+				{"3", "success def3"},
+			}, payload.Streams[0].Values)
 
-		json.NewDecoder(r.Body).Decode(&payload)
-		assert.Len(t, payload.Streams[0].Values, 3)
-		assert.Equal(t, [][]string{
-			{"1", "success def1"},
-			{"2", "success def2"},
-			{"3", "success def3"},
-		}, payload.Streams[0].Values)
+			reqCount++
+		}
 	}))
 	defer server.Close()
 
@@ -221,4 +222,26 @@ func TestForward(t *testing.T) {
 		assert.GreaterOrEqual(t, 5, failedReqCount)
 	})
 
+	t.Run("successfully send a compressed batch of 2 log lines", func(t *testing.T) {
+		server := generateMockForwarderDestination(func(w http.ResponseWriter, r *http.Request) {
+			payload := Payload{}
+			gzipReader, err := gzip.NewReader(r.Body)
+			assert.Equal(t, "gzip", r.Header.Get("Content-Encoding"))
+			assert.Nil(t, err)
+			defer gzipReader.Close()
+			defer r.Body.Close()
+			assert.Nil(t, json.NewDecoder(gzipReader).Decode(&payload))
+			assert.Equal(t, [][]string{
+				{"1", "a"},
+				{"2", "b"},
+			}, payload.Streams[0].Values)
+		})
+		fwd := prepareTestForwarder(server.URL)
+		fwd.conf.CompressRequest = true
+		err := fwd.forward(
+			pipeline.Data{Timestamp: "1", LogLine: "a"},
+			pipeline.Data{Timestamp: "2", LogLine: "b"},
+		)
+		assert.Nil(t, err)
+	})
 }

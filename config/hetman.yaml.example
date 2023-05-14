@@ -13,6 +13,7 @@ targets:
           label: hetman
           source: nginx
           dest: loki
+        compress_request: true 
   - id: misc
     paths:
       - testdata/syslog/*.log
@@ -23,3 +24,4 @@ targets:
           label: hetman
           source: misc
           dest: loki
+        compress_request: false 
