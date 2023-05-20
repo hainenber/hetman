@@ -7,7 +7,7 @@ import (
 	"sync"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/hainenber/hetman/tailer"
+	"github.com/hainenber/hetman/internal/tailer"
 	"github.com/rs/zerolog"
 )
 

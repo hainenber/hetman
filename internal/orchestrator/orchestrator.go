@@ -4,12 +4,12 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/hainenber/hetman/buffer"
-	"github.com/hainenber/hetman/config"
-	"github.com/hainenber/hetman/forwarder"
-	"github.com/hainenber/hetman/input"
-	"github.com/hainenber/hetman/registry"
-	"github.com/hainenber/hetman/tailer"
+	"github.com/hainenber/hetman/internal/buffer"
+	"github.com/hainenber/hetman/internal/config"
+	"github.com/hainenber/hetman/internal/forwarder"
+	"github.com/hainenber/hetman/internal/input"
+	"github.com/hainenber/hetman/internal/registry"
+	"github.com/hainenber/hetman/internal/tailer"
 	"github.com/rs/zerolog"
 	"github.com/samber/lo"
 )

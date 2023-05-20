@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hainenber/hetman/buffer"
-	"github.com/hainenber/hetman/pipeline"
+	"github.com/hainenber/hetman/internal/buffer"
+	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/nxadm/tail"
 	"github.com/rs/zerolog"
 )

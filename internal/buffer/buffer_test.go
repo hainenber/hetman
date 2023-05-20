@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/hainenber/hetman/pipeline"
+	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/stretchr/testify/assert"
 )
 

@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
-	"github.com/hainenber/hetman/config"
-	"github.com/hainenber/hetman/pipeline"
+	"github.com/hainenber/hetman/internal/config"
+	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/rs/zerolog"
 )
 

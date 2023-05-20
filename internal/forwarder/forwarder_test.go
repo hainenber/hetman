@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hainenber/hetman/config"
-	"github.com/hainenber/hetman/pipeline"
+	"github.com/hainenber/hetman/internal/config"
+	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 )
@@ -184,9 +184,8 @@ func TestForward(t *testing.T) {
 				{"2", "success def2"},
 				{"3", "success def3"},
 			}, payload.Streams[0].Values)
-
-			reqCount++
 		}
+		reqCount++
 	}))
 	defer server.Close()
 

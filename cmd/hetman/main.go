@@ -9,8 +9,8 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
-	"github.com/hainenber/hetman/config"
-	"github.com/hainenber/hetman/orchestrator"
+	"github.com/hainenber/hetman/internal/config"
+	"github.com/hainenber/hetman/internal/orchestrator"
 )
 
 func main() {

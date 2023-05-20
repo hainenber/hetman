@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/hainenber/hetman/pipeline"
+	"github.com/hainenber/hetman/internal/pipeline"
 )
 
 type Buffer struct {

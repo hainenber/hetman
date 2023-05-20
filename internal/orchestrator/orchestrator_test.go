@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hainenber/hetman/config"
+	"github.com/hainenber/hetman/internal/config"
 	"github.com/stretchr/testify/assert"
 )
 
