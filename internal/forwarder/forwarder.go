@@ -76,14 +76,17 @@ func (f *Forwarder) Run(bufferChan chan pipeline.Data) {
 			return
 		// Send buffered logs in batch
 		// If failed, will queue log(s) back to buffer channel for next persistence
-		case line := <-f.LogChan:
-			if line.LogLine == f.Signature {
+		case line, ok := <-f.LogChan:
+			if !ok || line.LogLine == f.Signature {
 				continue
 			}
 			// In case received log isn't offset, set into batch
 			batch = append(batch, line)
-			for i := 1; i < f.computeBatchSize(); i++ {
-				logLine := <-f.LogChan
+			for i := 1; i < DEFAULT_BATCH_SIZE; i++ {
+				logLine, exists := <-f.LogChan
+				if !exists {
+					continue
+				}
 				if logLine.LogLine == f.Signature {
 					break
 				}
@@ -96,14 +99,11 @@ func (f *Forwarder) Run(bufferChan chan pipeline.Data) {
 				}
 			}
 			batch = []pipeline.Data{}
+
 		default:
 			continue
 		}
 	}
-}
-
-func (f *Forwarder) computeBatchSize() int {
-	return DEFAULT_BATCH_SIZE
 }
 
 // Flush all consumed messages, forwarding to remote endpoints
