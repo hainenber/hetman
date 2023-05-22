@@ -60,26 +60,29 @@ func NewForwarder(conf config.ForwarderConfig) *Forwarder {
 	}
 }
 
-// Run sends tailed or disk-buffered logs to remote endpoints
+// Run sends tailed or disk-buffered logs to remote endpoints.
 // Terminates once context is cancelled
-func (f *Forwarder) Run(bufferChan chan pipeline.Data) {
+func (f *Forwarder) Run(bufferChan chan pipeline.Data, backpressureChan chan int) {
 	var batch []pipeline.Data
 	for {
 		select {
+
+		// Close down all activities once receiving termination signals
 		case <-f.ctx.Done():
 			// Last attempt sending all consumed logs to downstream before shutdown
 			// If flush attempt failed, queue logs back to buffer
-			errors := f.Flush(bufferChan)
-			for _, err := range errors {
+			for _, err := range f.Flush(bufferChan) {
 				f.logger.Error().Err(err).Msg("")
 			}
 			return
+
 		// Send buffered logs in batch
 		// If failed, will queue log(s) back to buffer channel for next persistence
 		case line, ok := <-f.LogChan:
 			if !ok || line.LogLine == f.Signature {
 				continue
 			}
+			print("len(f.LogChan) ", len(f.LogChan), "\n")
 			// In case received log isn't offset, set into batch
 			batch = append(batch, line)
 			for i := 1; i < DEFAULT_BATCH_SIZE; i++ {
@@ -94,10 +97,21 @@ func (f *Forwarder) Run(bufferChan chan pipeline.Data) {
 			}
 			if err := f.forward(batch...); err != nil {
 				f.logger.Error().Err(err).Msg("")
+				// Queue batched log(s) back to buffer channel
 				for _, pipelineData := range batch {
 					bufferChan <- pipelineData
 				}
 			}
+
+			// Decrement global backpressure counter with number of bytes released from non-zero batch
+			// if len(batch) > 0 {
+			// 	batchedLogSize := lo.Reduce(batch, func(agg int, item pipeline.Data, _ int) int {
+			// 		return agg + len(item.LogLine)
+			// 	}, 0)
+			// 	backpressureChan <- -batchedLogSize
+			// }
+
+			// Restore batch array to zero length
 			batch = []pipeline.Data{}
 
 		default:

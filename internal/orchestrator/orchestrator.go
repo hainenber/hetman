@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/hainenber/hetman/internal/backpressure"
 	"github.com/hainenber/hetman/internal/buffer"
 	"github.com/hainenber/hetman/internal/config"
 	"github.com/hainenber/hetman/internal/forwarder"
@@ -15,16 +16,17 @@ import (
 )
 
 type Orchestrator struct {
-	wg                 sync.WaitGroup
-	config             *config.Config
-	doneChan           chan struct{}
-	logger             zerolog.Logger
-	registrar          *registry.Registry
-	inputs             []*input.Input
-	tailers            []*tailer.Tailer
-	buffers            []*buffer.Buffer
-	forwarders         []*forwarder.Forwarder
-	pathToForwarderMap map[string][]config.ForwarderConfig
+	wg                  sync.WaitGroup
+	config              *config.Config
+	doneChan            chan struct{}
+	logger              zerolog.Logger
+	registrar           *registry.Registry
+	inputs              []*input.Input
+	tailers             []*tailer.Tailer
+	buffers             []*buffer.Buffer
+	backpressureEngines []*backpressure.Backpressure
+	forwarders          []*forwarder.Forwarder
+	pathToForwarderMap  map[string][]config.ForwarderConfig
 }
 
 type OrchestratorOption struct {
@@ -182,6 +184,27 @@ func (o *Orchestrator) Run() struct{} {
 
 // Execute tailer->buffer->forwarder workflow
 func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderMap) {
+	// A backpressure engine strictly handles one workflow
+	o.logger.Info().Msg("Initializing backpressure registry...")
+	backpressureEngine, err := backpressure.NewBackpressure(backpressure.BackpressureOptions{
+		BackpressureMemoryLimit: o.config.GlobalConfig.BackpressureMemoryLimit,
+	})
+	if err != nil {
+		o.logger.Fatal().Err(err).Msg("")
+	}
+	o.logger.Info().Msg("Global backpressure registry initialized")
+
+	o.wg.Add(1)
+	go func() {
+		defer o.wg.Done()
+		backpressureEngine.Run()
+	}()
+	o.logger.Info().Msg("Global backpressure registry is running")
+
+	o.backpressureEngines = append(o.backpressureEngines, backpressureEngine)
+
+	// Initiate workflow from path-to-forwarder map
+	// TODO: Make Workflow own struct
 	for translatedPath, workflowOpts := range processedPathToForwarderMap {
 		// Check if there's any saved offset for this file
 		// This can be override by read position present in workflow options
@@ -231,7 +254,7 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 			o.wg.Add(1)
 			go func() {
 				defer o.wg.Done()
-				fwd.Run(fwdBuffer.BufferChan)
+				fwd.Run(fwdBuffer.BufferChan, backpressureEngine.GetUpdateChan())
 			}()
 
 			o.wg.Add(1)
@@ -245,7 +268,7 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 		o.wg.Add(1)
 		go func() {
 			defer o.wg.Done()
-			t.Run(buffers)
+			t.Run(buffers, backpressureEngine.GetUpdateChan())
 		}()
 		o.logger.Info().Msgf("Tailer for path \"%v\" is now running", t.Tailer.Filename)
 	}
@@ -270,6 +293,10 @@ func (o *Orchestrator) Close() {
 		b.Close()
 	}
 	o.logger.Info().Msg("Sent close signal to created buffers")
+	for _, bp := range o.backpressureEngines {
+		bp.Close()
+	}
+	o.logger.Info().Msg("Sent close signal to created backpressure engines")
 }
 
 func (o *Orchestrator) Cleanup() {

@@ -57,6 +57,7 @@ func TestForwarderRun(t *testing.T) {
 
 		fwd = prepareTestForwarder(server.URL)
 		bufferChan := make(chan pipeline.Data, 1)
+		backpressureChan := make(chan int, 2)
 
 		fwd.LogChan <- pipeline.Data{LogLine: "0"}
 		fwd.LogChan <- pipeline.Data{LogLine: "1"}
@@ -65,7 +66,7 @@ func TestForwarderRun(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			fwd.Run(bufferChan)
+			fwd.Run(bufferChan, backpressureChan)
 		}()
 
 		wg.Wait()
@@ -105,6 +106,8 @@ func TestForwarderRun(t *testing.T) {
 		}()
 
 		fwd = prepareTestForwarder(server.URL)
+		bufferChan := make(chan pipeline.Data, 1)
+		backpressureChan := make(chan int, 1)
 
 		for i := 0; i < 100; i++ {
 			fwd.LogChan <- pipeline.Data{LogLine: fmt.Sprint(i)}
@@ -114,7 +117,7 @@ func TestForwarderRun(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			fwd.Run(make(chan pipeline.Data, 1024))
+			fwd.Run(bufferChan, backpressureChan)
 		}()
 
 		wg.Wait()

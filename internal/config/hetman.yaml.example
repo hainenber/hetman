@@ -1,6 +1,7 @@
 global:
   registry_directory: /tmp
   disk_buffer_persistence: true
+  backpressure_mem_limit: 500
 
 targets:
   - id: nginx
