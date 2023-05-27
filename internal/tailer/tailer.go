@@ -8,25 +8,31 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hainenber/hetman/internal/backpressure"
 	"github.com/hainenber/hetman/internal/buffer"
 	"github.com/hainenber/hetman/internal/pipeline"
+	"github.com/hainenber/hetman/internal/tailer/state"
 	"github.com/nxadm/tail"
 	"github.com/rs/zerolog"
 )
 
 type Tailer struct {
-	mu         sync.Mutex
-	Tailer     *tail.Tail
-	Offset     int64
-	ctx        context.Context
-	cancelFunc context.CancelFunc
-	logger     zerolog.Logger
+	mu                 sync.Mutex
+	Tailer             *tail.Tail
+	Offset             int64
+	ctx                context.Context
+	cancelFunc         context.CancelFunc
+	logger             zerolog.Logger
+	state              state.TailerState
+	StateChan          chan state.TailerState
+	BackpressureEngine *backpressure.Backpressure
 }
 
 type TailerOptions struct {
-	File   string
-	Logger zerolog.Logger
-	Offset int64
+	File               string
+	Logger             zerolog.Logger
+	Offset             int64
+	BackpressureEngine *backpressure.Backpressure
 }
 
 func NewTailer(tailerOptions TailerOptions) (*Tailer, error) {
@@ -49,7 +55,12 @@ func NewTailer(tailerOptions TailerOptions) (*Tailer, error) {
 	// Create tailer
 	tailer, err := tail.TailFile(
 		tailerOptions.File,
-		tail.Config{Follow: true, ReOpen: true, Logger: tailerLogger, Location: location},
+		tail.Config{
+			Follow:   true,
+			ReOpen:   true,
+			Logger:   tailerLogger,
+			Location: location,
+		},
 	)
 	if err != nil {
 		return nil, err
@@ -58,28 +69,55 @@ func NewTailer(tailerOptions TailerOptions) (*Tailer, error) {
 	ctx, cancelFunc := context.WithCancel(context.Background())
 
 	return &Tailer{
-		ctx:        ctx,
-		cancelFunc: cancelFunc,
-		Tailer:     tailer,
-		logger:     tailerOptions.Logger,
+		ctx:                ctx,
+		cancelFunc:         cancelFunc,
+		Tailer:             tailer,
+		logger:             tailerOptions.Logger,
+		StateChan:          make(chan state.TailerState, 1024),
+		BackpressureEngine: tailerOptions.BackpressureEngine,
 	}, nil
 }
 
-// Remember last offset from tailed file
 func (t *Tailer) Run(buffers []*buffer.Buffer) {
+	t.SetState(state.Running)
+
 	for {
 		select {
+
+		// Close down all activities once receiving termination signals
 		case <-t.ctx.Done():
+			t.SetState(state.Closed)
 			err := t.Cleanup()
 			if err != nil {
 				t.logger.Error().Err(err).Msg("")
 			}
 			// Buffer channels will stil be open to receive failed-to-forward log
 			return
+
 		case line := <-t.Tailer.Lines:
-			for _, b := range buffers {
-				b.BufferChan <- pipeline.Data{Timestamp: fmt.Sprint(time.Now().UnixNano()), LogLine: line.Text}
+			lineSize := len(line.Text)
+
+			// Send log size to backpressure engine to check for desired state
+			t.BackpressureEngine.UpdateChan <- lineSize
+
+			// Block until getting Running response from backpressure engine
+			for computedTailerState := range t.StateChan {
+				t.SetState(computedTailerState)
+				if computedTailerState == state.Running || computedTailerState == state.Closed {
+					break
+				}
 			}
+
+			// Relay tailed log line to next component in the workflow, buffer
+			for _, b := range buffers {
+				b.BufferChan <- pipeline.Data{
+					Timestamp: fmt.Sprint(time.Now().UnixNano()),
+					LogLine:   line.Text,
+				}
+			}
+
+		default:
+			continue
 		}
 	}
 }
@@ -88,11 +126,25 @@ func (t *Tailer) Cleanup() error {
 	return t.Tailer.Stop()
 }
 
+func (t *Tailer) GetState() state.TailerState {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.state
+}
+
+func (t *Tailer) SetState(state state.TailerState) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.state = state
+}
+
 func (t *Tailer) Close() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	t.cancelFunc()
+
+	t.StateChan <- state.Closed
 
 	// Register last read position
 	offset, err := t.Tailer.Tell()

@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/hainenber/hetman/internal/backpressure"
 	"github.com/hainenber/hetman/internal/buffer"
 	"github.com/hainenber/hetman/internal/config"
 	"github.com/hainenber/hetman/internal/forwarder"
@@ -15,16 +16,23 @@ import (
 )
 
 type Orchestrator struct {
-	wg                 sync.WaitGroup
+	inputWg        sync.WaitGroup
+	tailerWg       sync.WaitGroup
+	bufferWg       sync.WaitGroup
+	forwarderWg    sync.WaitGroup
+	backpressureWg sync.WaitGroup
+
 	config             *config.Config
-	doneChan           chan struct{}
+	pathToForwarderMap map[string][]config.ForwarderConfig
 	logger             zerolog.Logger
 	registrar          *registry.Registry
-	inputs             []*input.Input
-	tailers            []*tailer.Tailer
-	buffers            []*buffer.Buffer
-	forwarders         []*forwarder.Forwarder
-	pathToForwarderMap map[string][]config.ForwarderConfig
+	doneChan           chan struct{}
+
+	inputs              []*input.Input
+	tailers             []*tailer.Tailer
+	buffers             []*buffer.Buffer
+	backpressureEngines []*backpressure.Backpressure
+	forwarders          []*forwarder.Forwarder
 }
 
 type OrchestratorOption struct {
@@ -113,9 +121,9 @@ func (o *Orchestrator) Run() struct{} {
 		if err != nil {
 			o.logger.Fatal().Err(err).Msg("")
 		}
-		o.wg.Add(1)
+		o.inputWg.Add(1)
 		go func() {
-			defer o.wg.Done()
+			defer o.inputWg.Done()
 			i.Run() // No op if path args is not glob-like
 		}()
 		o.logger.Info().Msgf("Input %v is running", path)
@@ -128,9 +136,9 @@ func (o *Orchestrator) Run() struct{} {
 		}
 
 		// Generate log workflow for new files detected from watcher
-		o.wg.Add(1)
+		o.inputWg.Add(1)
 		go func(innerFwdConf []config.ForwarderConfig) {
-			defer o.wg.Done()
+			defer o.inputWg.Done()
 
 			// If watcher is not init'ed, the target paths are not glob-like
 			// and are literal paths
@@ -168,20 +176,37 @@ func (o *Orchestrator) Run() struct{} {
 	// the orchestrator
 	o.Close()
 
-	// Ensure all registered tailer and forwarder goroutines
-	// has finished running
-	o.wg.Wait()
-
 	// Perform cleanup once everything has been shut down
 	o.Cleanup()
 
-	// Empty struct to indicat main goroutine that this orchestrator
+	// Empty struct to indicate main goroutine that this orchestrator
 	// has been cleanly removed
 	return struct{}{}
 }
 
 // Execute tailer->buffer->forwarder workflow
 func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderMap) {
+	// A backpressure engine strictly handles one workflow
+	o.logger.Info().Msg("Initializing backpressure registry...")
+	backpressureEngine, err := backpressure.NewBackpressure(backpressure.BackpressureOptions{
+		BackpressureMemoryLimit: o.config.GlobalConfig.BackpressureMemoryLimit,
+	})
+	if err != nil {
+		o.logger.Fatal().Err(err).Msg("")
+	}
+	o.logger.Info().Msg("Global backpressure registry initialized")
+
+	o.backpressureWg.Add(1)
+	go func() {
+		defer o.backpressureWg.Done()
+		backpressureEngine.Run()
+	}()
+	o.logger.Info().Msg("Global backpressure registry is running")
+
+	o.backpressureEngines = append(o.backpressureEngines, backpressureEngine)
+
+	// Initiate workflow from path-to-forwarder map
+	// TODO: Make Workflow own struct
 	for translatedPath, workflowOpts := range processedPathToForwarderMap {
 		// Check if there's any saved offset for this file
 		// This can be override by read position present in workflow options
@@ -196,14 +221,18 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 
 		// Initialize tailer with options
 		t, err := tailer.NewTailer(tailer.TailerOptions{
-			File:   translatedPath,
-			Logger: o.logger,
-			Offset: offset,
+			File:               translatedPath,
+			Logger:             o.logger,
+			Offset:             offset,
+			BackpressureEngine: backpressureEngine,
 		})
 		if err != nil {
 			o.logger.Error().Err(err).Msg("")
 		}
 		o.logger.Info().Msgf("Tailer for path %v has been initialized", translatedPath)
+
+		// Register tailer into workflow-wide backpressure engine
+		backpressureEngine.RegisterTailerChan(t.StateChan)
 
 		// Register tailer into associated input
 		// This is to get old, renamed file's last read position
@@ -228,23 +257,23 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 			o.buffers = append(o.buffers, fwdBuffer)
 			o.forwarders = append(o.forwarders, fwd)
 
-			o.wg.Add(1)
+			o.forwarderWg.Add(1)
 			go func() {
-				defer o.wg.Done()
-				fwd.Run(fwdBuffer.BufferChan)
+				defer o.forwarderWg.Done()
+				fwd.Run(fwdBuffer.BufferChan, backpressureEngine.UpdateChan)
 			}()
 
-			o.wg.Add(1)
+			o.bufferWg.Add(1)
 			go func() {
-				defer o.wg.Done()
+				defer o.bufferWg.Done()
 				fwdBuffer.Run(fwd.LogChan)
 			}()
 		}
 
 		o.tailers = append(o.tailers, t)
-		o.wg.Add(1)
+		o.tailerWg.Add(1)
 		go func() {
-			defer o.wg.Done()
+			defer o.tailerWg.Done()
 			t.Run(buffers)
 		}()
 		o.logger.Info().Msgf("Tailer for path \"%v\" is now running", t.Tailer.Filename)
@@ -252,24 +281,37 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 }
 
 func (o *Orchestrator) Close() {
-	// Close following components in order: input -> tailer -> forwarders -> buffers
+	// Close following components in order: input -> tailer -> buffer -> forwarder
 	// Ensure all consumed log entries are flushed before closing
 	for _, i := range o.inputs {
 		i.Close()
 	}
 	o.logger.Info().Msg("Sent close signal to created inputs")
+	o.inputWg.Wait()
+
 	for _, t := range o.tailers {
 		t.Close()
 	}
 	o.logger.Info().Msg("Sent close signal to created tailers")
-	for _, f := range o.forwarders {
-		f.Close()
-	}
-	o.logger.Info().Msg("Sent close signal to created forwarders")
+	o.tailerWg.Wait()
+
 	for _, b := range o.buffers {
 		b.Close()
 	}
 	o.logger.Info().Msg("Sent close signal to created buffers")
+	o.bufferWg.Wait()
+
+	for _, f := range o.forwarders {
+		f.Close()
+	}
+	o.logger.Info().Msg("Sent close signal to created forwarders")
+	o.forwarderWg.Wait()
+
+	for _, bp := range o.backpressureEngines {
+		bp.Close()
+	}
+	o.logger.Info().Msg("Sent close signal to created backpressure engines")
+	o.backpressureWg.Wait()
 }
 
 func (o *Orchestrator) Cleanup() {

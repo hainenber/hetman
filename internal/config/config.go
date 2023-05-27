@@ -28,8 +28,9 @@ type TargetConfig struct {
 }
 
 type GlobalConfig struct {
-	RegistryDir           string `koanf:"registry_directory"`
-	DiskBufferPersistence bool   `koanf:"disk_buffer_persistence"`
+	RegistryDir             string `koanf:"registry_directory"`
+	DiskBufferPersistence   bool   `koanf:"disk_buffer_persistence"`
+	BackpressureMemoryLimit int    `koanf:"backpressure_memory_limit"`
 }
 
 type Config struct {
@@ -38,7 +39,7 @@ type Config struct {
 }
 
 const (
-	DefaultConfigPath = "config/hetman.yaml"
+	DefaultConfigPath = "hetman.yaml"
 )
 
 var k = koanf.New(".")

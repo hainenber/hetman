@@ -57,6 +57,7 @@ func TestForwarderRun(t *testing.T) {
 
 		fwd = prepareTestForwarder(server.URL)
 		bufferChan := make(chan pipeline.Data, 1)
+		backpressureChan := make(chan int, 1)
 
 		fwd.LogChan <- pipeline.Data{LogLine: "0"}
 		fwd.LogChan <- pipeline.Data{LogLine: "1"}
@@ -65,10 +66,13 @@ func TestForwarderRun(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			fwd.Run(bufferChan)
+			fwd.Run(bufferChan, backpressureChan)
 		}()
 
 		wg.Wait()
+
+		// Ensure backpressure channels got a decremented value
+		assert.Equal(t, -2, <-backpressureChan)
 	})
 
 	t.Run("successfully send 100 log lines, batched", func(t *testing.T) {
@@ -105,6 +109,8 @@ func TestForwarderRun(t *testing.T) {
 		}()
 
 		fwd = prepareTestForwarder(server.URL)
+		bufferChan := make(chan pipeline.Data, 1)
+		backpressureChan := make(chan int, 2)
 
 		for i := 0; i < 100; i++ {
 			fwd.LogChan <- pipeline.Data{LogLine: fmt.Sprint(i)}
@@ -114,10 +120,17 @@ func TestForwarderRun(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			fwd.Run(make(chan pipeline.Data, 1024))
+			fwd.Run(bufferChan, backpressureChan)
 		}()
 
 		wg.Wait()
+
+		var totalDecrement int
+		for decrement := range backpressureChan {
+			totalDecrement += decrement
+		}
+
+		assert.Equal(t, -190, totalDecrement)
 	})
 }
 
@@ -152,7 +165,7 @@ func TestForwarderFlush(t *testing.T) {
 	assert.Equal(t, pipeline.Data{LogLine: "failed"}, <-bufferChan)
 }
 
-func TestForward(t *testing.T) {
+func TestForwarderForward(t *testing.T) {
 	var reqCount int
 
 	// Always successful server
