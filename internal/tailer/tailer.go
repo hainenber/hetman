@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hainenber/hetman/internal/backpressure"
 	"github.com/hainenber/hetman/internal/buffer"
 	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/hainenber/hetman/internal/tailer/state"
@@ -16,20 +17,22 @@ import (
 )
 
 type Tailer struct {
-	mu         sync.Mutex
-	Tailer     *tail.Tail
-	Offset     int64
-	ctx        context.Context
-	cancelFunc context.CancelFunc
-	logger     zerolog.Logger
-	state      state.TailerState
-	StateChan  chan state.TailerState
+	mu                 sync.Mutex
+	Tailer             *tail.Tail
+	Offset             int64
+	ctx                context.Context
+	cancelFunc         context.CancelFunc
+	logger             zerolog.Logger
+	state              state.TailerState
+	StateChan          chan state.TailerState
+	BackpressureEngine *backpressure.Backpressure
 }
 
 type TailerOptions struct {
-	File   string
-	Logger zerolog.Logger
-	Offset int64
+	File               string
+	Logger             zerolog.Logger
+	Offset             int64
+	BackpressureEngine *backpressure.Backpressure
 }
 
 func NewTailer(tailerOptions TailerOptions) (*Tailer, error) {
@@ -52,7 +55,12 @@ func NewTailer(tailerOptions TailerOptions) (*Tailer, error) {
 	// Create tailer
 	tailer, err := tail.TailFile(
 		tailerOptions.File,
-		tail.Config{Follow: true, ReOpen: true, Logger: tailerLogger, Location: location},
+		tail.Config{
+			Follow:   true,
+			ReOpen:   true,
+			Logger:   tailerLogger,
+			Location: location,
+		},
 	)
 	if err != nil {
 		return nil, err
@@ -61,15 +69,16 @@ func NewTailer(tailerOptions TailerOptions) (*Tailer, error) {
 	ctx, cancelFunc := context.WithCancel(context.Background())
 
 	return &Tailer{
-		ctx:        ctx,
-		cancelFunc: cancelFunc,
-		Tailer:     tailer,
-		logger:     tailerOptions.Logger,
-		StateChan:  make(chan state.TailerState, 1),
+		ctx:                ctx,
+		cancelFunc:         cancelFunc,
+		Tailer:             tailer,
+		logger:             tailerOptions.Logger,
+		StateChan:          make(chan state.TailerState, 1024),
+		BackpressureEngine: tailerOptions.BackpressureEngine,
 	}, nil
 }
 
-func (t *Tailer) Run(buffers []*buffer.Buffer, backpressureChan chan int) {
+func (t *Tailer) Run(buffers []*buffer.Buffer) {
 	t.SetState(state.Running)
 
 	for {
@@ -86,18 +95,26 @@ func (t *Tailer) Run(buffers []*buffer.Buffer, backpressureChan chan int) {
 			return
 
 		case line := <-t.Tailer.Lines:
-			if t.GetState() == state.Running {
-				lineSize := len(line.Text)
+			lineSize := len(line.Text)
 
-				// Tailer is still running, meaning mem limit not yet reached, asynchronously increment internal counter
-				backpressureChan <- lineSize
-				for _, b := range buffers {
-					b.BufferChan <- pipeline.Data{Timestamp: fmt.Sprint(time.Now().UnixNano()), LogLine: line.Text}
+			// Send log size to backpressure engine to check for desired state
+			t.BackpressureEngine.UpdateChan <- lineSize
+
+			// Block until getting Running response from backpressure engine
+			for computedTailerState := range t.StateChan {
+				t.SetState(computedTailerState)
+				if computedTailerState == state.Running || computedTailerState == state.Closed {
+					break
 				}
 			}
 
-		case receivedTailerState := <-t.StateChan:
-			t.SetState(receivedTailerState)
+			// Relay tailed log line to next component in the workflow, buffer
+			for _, b := range buffers {
+				b.BufferChan <- pipeline.Data{
+					Timestamp: fmt.Sprint(time.Now().UnixNano()),
+					LogLine:   line.Text,
+				}
+			}
 
 		default:
 			continue
@@ -126,6 +143,8 @@ func (t *Tailer) Close() {
 	defer t.mu.Unlock()
 
 	t.cancelFunc()
+
+	t.StateChan <- state.Closed
 
 	// Register last read position
 	offset, err := t.Tailer.Tell()

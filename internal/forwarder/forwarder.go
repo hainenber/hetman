@@ -15,6 +15,7 @@ import (
 	"github.com/hainenber/hetman/internal/config"
 	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/rs/zerolog"
+	"github.com/samber/lo"
 )
 
 const (
@@ -74,6 +75,7 @@ func (f *Forwarder) Run(bufferChan chan pipeline.Data, backpressureChan chan int
 			for _, err := range f.Flush(bufferChan) {
 				f.logger.Error().Err(err).Msg("")
 			}
+			close(backpressureChan)
 			return
 
 		// Send buffered logs in batch
@@ -82,7 +84,6 @@ func (f *Forwarder) Run(bufferChan chan pipeline.Data, backpressureChan chan int
 			if !ok || line.LogLine == f.Signature {
 				continue
 			}
-			print("len(f.LogChan) ", len(f.LogChan), "\n")
 			// In case received log isn't offset, set into batch
 			batch = append(batch, line)
 			for i := 1; i < DEFAULT_BATCH_SIZE; i++ {
@@ -101,15 +102,14 @@ func (f *Forwarder) Run(bufferChan chan pipeline.Data, backpressureChan chan int
 				for _, pipelineData := range batch {
 					bufferChan <- pipelineData
 				}
+			} else {
+				// Decrement global backpressure counter with number of bytes released from non-zero batch
+				// when successfully deliver log batch
+				batchedLogSize := lo.Reduce(batch, func(agg int, item pipeline.Data, _ int) int {
+					return agg + len(item.LogLine)
+				}, 0)
+				backpressureChan <- -batchedLogSize
 			}
-
-			// Decrement global backpressure counter with number of bytes released from non-zero batch
-			// if len(batch) > 0 {
-			// 	batchedLogSize := lo.Reduce(batch, func(agg int, item pipeline.Data, _ int) int {
-			// 		return agg + len(item.LogLine)
-			// 	}, 0)
-			// 	backpressureChan <- -batchedLogSize
-			// }
 
 			// Restore batch array to zero length
 			batch = []pipeline.Data{}
@@ -124,6 +124,9 @@ func (f *Forwarder) Run(bufferChan chan pipeline.Data, backpressureChan chan int
 func (f *Forwarder) Flush(bufferChan chan pipeline.Data) []error {
 	var errors []error
 	for line := range f.LogChan {
+		if line.LogLine == f.Signature {
+			continue
+		}
 		if err := f.forward(line); err != nil {
 			errors = append(errors, err)
 			bufferChan <- line
