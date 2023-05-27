@@ -39,7 +39,7 @@ type Config struct {
 }
 
 const (
-	DefaultConfigPath = "config/hetman.yaml"
+	DefaultConfigPath = "hetman.yaml"
 )
 
 var k = koanf.New(".")
