@@ -106,8 +106,8 @@ func TestTailerRun(t *testing.T) {
 		}
 
 		backpressureEngine.UpdateChan <- -3
-		<-buffers[0].BufferChan
-		<-buffers[0].BufferChan
+		assert.Equal(t, "a", (<-buffers[0].BufferChan).LogLine)
+		assert.Equal(t, "b", (<-buffers[0].BufferChan).LogLine)
 
 		tl.Close()
 		backpressureEngine.Close()

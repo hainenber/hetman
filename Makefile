@@ -11,9 +11,9 @@ lint:
 	go test -cover ./...
 
 run:
-	rm -rf ./bin
+	rm -rf ./bin && mkdir ./bin
+	seq 1 3 > /tmp/nginx.log
 	[[ -f /tmp/hetman.registry.json ]] && truncate -s 0 /tmp/hetman.registry.json 
-	mkdir ./bin
 	CGO_ENABLED=0 go build -o bin ./cmd/hetman
 	./bin/hetman
 
