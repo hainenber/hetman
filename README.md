@@ -12,11 +12,11 @@ At the moment, the agent only supports Loki as downstream log consumer
 * Reset read position of a tailed file during truncation.
 * Gracefully reload configurations changes when sending SIGHUP to running agent
 * Deliver logs in batches.
+* Built-in backpressure engine to control input/output bandwidth  
 
 ## Roadmap
 - [ ] Allow configuration with VRL.
 - [ ] Ability to parse multi-line logs.
 - [ ] Support multiple downstreams aside from Loki.
-- [ ] Work with downstream's backpressure signal.
 - [ ] Code coverage >80%
 - [ ] Fleet management
