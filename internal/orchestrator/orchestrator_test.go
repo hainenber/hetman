@@ -15,6 +15,43 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+type TestOrchestratorOption struct {
+	doneChan           chan struct{}
+	serverURL          string
+	backpressureOption int
+}
+
+func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string, *os.File) {
+	tmpRegistryDir, _ := os.MkdirTemp("", "orchestrator-backpressure-dir-")
+	tmpLogFile, _ := os.CreateTemp("", "orchestrator-backpressure-file-")
+	os.WriteFile(tmpLogFile.Name(), []byte("a\nb\n"), 0777)
+
+	orch := NewOrchestrator(OrchestratorOption{
+		DoneChan: opt.doneChan,
+		Config: &config.Config{
+			GlobalConfig: config.GlobalConfig{
+				RegistryDir:             tmpRegistryDir,
+				BackpressureMemoryLimit: opt.backpressureOption,
+			},
+			Targets: []config.TargetConfig{
+				{
+					Id: "test",
+					Paths: []string{
+						tmpLogFile.Name(),
+					},
+					Forwarders: []config.ForwarderConfig{
+						{
+							URL:     opt.serverURL,
+							AddTags: map[string]string{"a": "b", "c": "d"},
+						},
+					},
+				},
+			},
+		},
+	})
+	return orch, tmpRegistryDir, tmpLogFile
+}
+
 func TestNewOrchestrator(t *testing.T) {
 	tmpRegistryDir, _ := os.MkdirTemp("", "")
 	defer os.RemoveAll(tmpRegistryDir)
@@ -96,37 +133,17 @@ func TestOrchestratorBackpressure(t *testing.T) {
 			logDeliveredChan <- struct{}{}
 		}))
 		defer failedServer.Close()
-		tmpRegistryDir, _ := os.MkdirTemp("", "orchestrator-backpressure-dir-")
-		tmpLogFile, _ := os.CreateTemp("", "orchestrator-backpressure-file-")
-		os.WriteFile(tmpLogFile.Name(), []byte("a\nb\n"), 0777)
-		defer os.RemoveAll(tmpRegistryDir)
-		defer os.Remove(tmpLogFile.Name())
 
 		// Create and run a orchestrator with full workflow of tailer, buffer and forwarder
 		// Configure a small backpressure limit
-		orch := NewOrchestrator(OrchestratorOption{
-			DoneChan: doneChan,
-			Config: &config.Config{
-				GlobalConfig: config.GlobalConfig{
-					RegistryDir:             tmpRegistryDir,
-					BackpressureMemoryLimit: 1,
-				},
-				Targets: []config.TargetConfig{
-					{
-						Id: "test",
-						Paths: []string{
-							tmpLogFile.Name(),
-						},
-						Forwarders: []config.ForwarderConfig{
-							{
-								URL:     failedServer.URL,
-								AddTags: map[string]string{"a": "b", "c": "d"},
-							},
-						},
-					},
-				},
-			},
+		orch, tmpRegistryDir, tmpLogFile := generateTestOrchestrator(TestOrchestratorOption{
+			doneChan:           doneChan,
+			serverURL:          failedServer.URL,
+			backpressureOption: 1,
 		})
+		defer os.RemoveAll(tmpRegistryDir)
+		defer os.Remove(tmpLogFile.Name())
+
 		assert.NotNil(t, orch)
 
 		wg.Add(1)
@@ -167,40 +184,20 @@ func TestOrchestratorBackpressure(t *testing.T) {
 			logDeliveredChan <- struct{}{}
 		}))
 		defer func() {
-			assert.GreaterOrEqual(t, 5, reqCount)
+			assert.GreaterOrEqual(t, reqCount, 5)
 			offlineServer.Close()
 		}()
-		tmpRegistryDir, _ := os.MkdirTemp("", "orchestrator-backpressure-dir-")
-		tmpLogFile, _ := os.CreateTemp("", "orchestrator-backpressure-file-")
-		os.WriteFile(tmpLogFile.Name(), []byte("a\nb\n"), 0777)
+
+		// Create and run a orchestrator with full workflow of tailer, buffer and forwarder
+		// Configure a moderate backpressure limit
+		orch, tmpRegistryDir, tmpLogFile := generateTestOrchestrator(TestOrchestratorOption{
+			doneChan:           doneChan,
+			serverURL:          offlineServer.URL,
+			backpressureOption: 15,
+		})
 		defer os.RemoveAll(tmpRegistryDir)
 		defer os.Remove(tmpLogFile.Name())
 
-		// Create and run a orchestrator with full workflow of tailer, buffer and forwarder
-		// Configure a small backpressure limit
-		orch := NewOrchestrator(OrchestratorOption{
-			DoneChan: doneChan,
-			Config: &config.Config{
-				GlobalConfig: config.GlobalConfig{
-					RegistryDir:             tmpRegistryDir,
-					BackpressureMemoryLimit: 15,
-				},
-				Targets: []config.TargetConfig{
-					{
-						Id: "test",
-						Paths: []string{
-							tmpLogFile.Name(),
-						},
-						Forwarders: []config.ForwarderConfig{
-							{
-								URL:     offlineServer.URL,
-								AddTags: map[string]string{"a": "b", "c": "d"},
-							},
-						},
-					},
-				},
-			},
-		})
 		assert.NotNil(t, orch)
 
 		wg.Add(1)
@@ -252,37 +249,18 @@ func TestOrchestratorBackpressure(t *testing.T) {
 			onlineServer.Close()
 			assert.GreaterOrEqual(t, reqCount, 1)
 		}()
-		tmpRegistryDir, _ := os.MkdirTemp("", "orchestrator-backpressure-dir-")
-		tmpLogFile, _ := os.CreateTemp("", "orchestrator-backpressure-file-")
-		os.WriteFile(tmpLogFile.Name(), []byte("a\nb\n"), 0777)
+
+		orch, tmpRegistryDir, tmpLogFile := generateTestOrchestrator(TestOrchestratorOption{
+			doneChan:           doneChan,
+			serverURL:          onlineServer.URL,
+			backpressureOption: 15,
+		})
 		defer os.RemoveAll(tmpRegistryDir)
 		defer os.Remove(tmpLogFile.Name())
 
 		// Create and run a orchestrator with full workflow of tailer, buffer and forwarder
-		// Configure a small backpressure limit
-		orch := NewOrchestrator(OrchestratorOption{
-			DoneChan: doneChan,
-			Config: &config.Config{
-				GlobalConfig: config.GlobalConfig{
-					RegistryDir:             tmpRegistryDir,
-					BackpressureMemoryLimit: 15,
-				},
-				Targets: []config.TargetConfig{
-					{
-						Id: "test",
-						Paths: []string{
-							tmpLogFile.Name(),
-						},
-						Forwarders: []config.ForwarderConfig{
-							{
-								URL:     onlineServer.URL,
-								AddTags: map[string]string{"a": "b", "c": "d"},
-							},
-						},
-					},
-				},
-			},
-		})
+		// Configure a moderate backpressure limit
+
 		assert.NotNil(t, orch)
 
 		wg.Add(1)
