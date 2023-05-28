@@ -2,6 +2,10 @@ test:
 	docker-compose up -d
 	RATE=1 testdata/nginx-log-generator >> testdata/nginx.log
 
+vulncheck:
+	! command -v govulncheck && go install golang.org/x/vuln/cmd/govulncheck@latest || continue
+	govulncheck ./...
+
 lint:
 	go fmt ./...
 	go test -cover ./...
