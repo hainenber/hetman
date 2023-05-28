@@ -188,12 +188,9 @@ func (o *Orchestrator) Run() struct{} {
 func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderMap) {
 	// A backpressure engine strictly handles one workflow
 	o.logger.Info().Msg("Initializing backpressure registry...")
-	backpressureEngine, err := backpressure.NewBackpressure(backpressure.BackpressureOptions{
+	backpressureEngine := backpressure.NewBackpressure(backpressure.BackpressureOptions{
 		BackpressureMemoryLimit: o.config.GlobalConfig.BackpressureMemoryLimit,
 	})
-	if err != nil {
-		o.logger.Fatal().Err(err).Msg("")
-	}
 	o.logger.Info().Msg("Global backpressure registry initialized")
 
 	o.backpressureWg.Add(1)

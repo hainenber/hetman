@@ -98,9 +98,8 @@ func (i *Input) Run() {
 				if !ok {
 					continue
 				}
-
 				// Old files are still OK, followed by existing tailer
-				// But newly create files, if matched with configured glob paths,
+				// But newly created files, if matched with configured glob paths,
 				// must initiate new log workflow (tailing -> shipping)
 				// We need to get the last read position of old file
 				// "Create" part of a File Rename event will always start first, before "Rename" part

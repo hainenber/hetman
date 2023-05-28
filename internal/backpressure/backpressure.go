@@ -22,7 +22,7 @@ type BackpressureOptions struct {
 	BackpressureMemoryLimit int
 }
 
-func NewBackpressure(opts BackpressureOptions) (*Backpressure, error) {
+func NewBackpressure(opts BackpressureOptions) *Backpressure {
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	return &Backpressure{
 		ctx:        ctx,
@@ -30,7 +30,7 @@ func NewBackpressure(opts BackpressureOptions) (*Backpressure, error) {
 		current:    0,
 		limit:      int64(opts.BackpressureMemoryLimit),
 		UpdateChan: make(chan int, 1024),
-	}, nil
+	}
 }
 
 func (b *Backpressure) Run() {
@@ -87,8 +87,4 @@ func (b *Backpressure) Close() {
 
 func (b *Backpressure) GetInternalCounter() int64 {
 	return atomic.LoadInt64(&b.current)
-}
-
-func (b *Backpressure) UpdateInternalCounter(lineSize int) {
-	atomic.StoreInt64(&b.current, atomic.AddInt64(&b.current, int64(lineSize)))
 }

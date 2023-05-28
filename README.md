@@ -13,10 +13,10 @@ At the moment, the agent only supports Loki as downstream log consumer
 * Gracefully reload configurations changes when sending SIGHUP to running agent
 * Deliver logs in batches.
 * Built-in backpressure engine to control input/output bandwidth  
+* High percentage of code coverage (>= 80% for the majority of components)
 
 ## Roadmap
 - [ ] Allow configuration with VRL.
 - [ ] Ability to parse multi-line logs.
 - [ ] Support multiple downstreams aside from Loki.
-- [ ] Code coverage >80%
 - [ ] Fleet management

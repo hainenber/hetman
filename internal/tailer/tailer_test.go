@@ -44,7 +44,7 @@ func TestTailerRun(t *testing.T) {
 		var (
 			wg sync.WaitGroup
 		)
-		backpressureEngine, _ := backpressure.NewBackpressure(backpressure.BackpressureOptions{BackpressureMemoryLimit: 10})
+		backpressureEngine := backpressure.NewBackpressure(backpressure.BackpressureOptions{BackpressureMemoryLimit: 10})
 		tl, tmpFile, _ := createTestTailer(TailerOptions{
 			BackpressureEngine: backpressureEngine,
 		})
@@ -80,7 +80,7 @@ func TestTailerRun(t *testing.T) {
 		var (
 			wg sync.WaitGroup
 		)
-		backpressureEngine, _ := backpressure.NewBackpressure(backpressure.BackpressureOptions{})
+		backpressureEngine := backpressure.NewBackpressure(backpressure.BackpressureOptions{})
 		tl, tmpFile, _ := createTestTailer(TailerOptions{
 			BackpressureEngine: backpressureEngine,
 		})
