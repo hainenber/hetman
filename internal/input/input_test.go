@@ -1,35 +1,150 @@
 package input
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/hainenber/hetman/internal/tailer"
 	"github.com/stretchr/testify/assert"
 )
 
+func appendToFile(filename, newLine string) {
+	f, _ := os.OpenFile(filename,
+		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	defer f.Close()
+	f.WriteString(fmt.Sprintf("%s\n", newLine))
+}
+
+func prepareInputRunScenario() (*Input, string, string, string) {
+	tmpDir, _ := os.MkdirTemp("", "test_")
+	file1, _ := os.CreateTemp(tmpDir, "file1")
+
+	file1Name := file1.Name()
+	appendToFile(file1Name, "1st line for file1")
+	appendToFile(file1Name, "2nd line for file2")
+	file2Name := filepath.Join(tmpDir, "file2")
+
+	i, _ := NewInput(InputOptions{
+		Path: filepath.Join(tmpDir, "*"),
+	})
+
+	return i, tmpDir, file1Name, file2Name
+}
+
 func TestNewInput(t *testing.T) {
 	tmpDir, _ := os.MkdirTemp("", "test_")
 	defer os.RemoveAll(tmpDir)
 	tmpFile, _ := os.CreateTemp(tmpDir, "file1.log")
 
-	i, err := NewInput(InputOptions{
-		Path: tmpFile.Name(),
+	t.Run("no watcher initialized due to lack of wildcard", func(t *testing.T) {
+		i, err := NewInput(InputOptions{
+			Path: tmpFile.Name(),
+		})
+		assert.Nil(t, err)
+		assert.NotNil(t, i)
+		assert.Nil(t, i.watcher)
+		assert.Nil(t, i.Cleanup())
 	})
-	assert.Nil(t, err)
-	assert.NotNil(t, i)
-	assert.Nil(t, i.watcher)
-	assert.Nil(t, i.Cleanup())
 
-	i, err = NewInput(InputOptions{
-		Path: filepath.Join(tmpDir, "*.log"),
+	t.Run("watcher initialized due to presence of wildcard", func(t *testing.T) {
+		i, err := NewInput(InputOptions{
+			Path: filepath.Join(tmpDir, "*.log"),
+		})
+		assert.Nil(t, err)
+		assert.NotNil(t, i)
+		assert.NotNil(t, i)
+		assert.NotNil(t, i.watcher)
+		assert.Nil(t, i.Cleanup())
 	})
-	assert.Nil(t, err)
-	assert.NotNil(t, i)
-	assert.NotNil(t, i)
-	assert.NotNil(t, i.watcher)
-	assert.Nil(t, i.Cleanup())
+}
+
+func TestInputRun(t *testing.T) {
+	t.Run("capture create-type file rotation", func(t *testing.T) {
+		var (
+			wg                         sync.WaitGroup
+			doneTailerRegistrationChan = make(chan struct{})
+		)
+
+		i, tmpDir, file1Name, file2Name := prepareInputRunScenario()
+		defer os.RemoveAll(tmpDir)
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			i.Run()
+		}()
+
+		// Register a tailer for file1
+		go func() {
+			tl, _ := tailer.NewTailer(tailer.TailerOptions{
+				File: file1Name,
+			})
+			<-tl.Tailer.Lines
+			i.RegisterTailer(tl)
+			doneTailerRegistrationChan <- struct{}{}
+		}()
+
+		// Block until tailer has been initialized and registered
+		<-doneTailerRegistrationChan
+
+		// Rename file1 to file2
+		// Append file2 with new log line
+		os.Rename(file1Name, file2Name)
+		appendToFile(file2Name, "new line for file2")
+
+		// Expect Input component to recognize "created"-type log rotation
+		// and send data (with read position from registered tailer)
+		// to initialize a new log workflow
+		assert.Equal(t, RenameEvent{Filepath: file2Name, LastReadPosition: 38}, <-i.InputChan)
+
+		i.Close()
+
+		wg.Wait()
+	})
+
+	t.Run("initiate new tailer for newly created file matching pattern", func(t *testing.T) {
+		var (
+			wg                         sync.WaitGroup
+			doneTailerRegistrationChan = make(chan struct{})
+		)
+
+		i, tmpDir, _, file2Name := prepareInputRunScenario()
+		defer os.RemoveAll(tmpDir)
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			i.Run()
+		}()
+
+		// Register a tailer for file2
+		go func() {
+			tl, _ := tailer.NewTailer(tailer.TailerOptions{
+				File: file2Name,
+			})
+			i.RegisterTailer(tl)
+			doneTailerRegistrationChan <- struct{}{}
+		}()
+
+		<-doneTailerRegistrationChan
+
+		// Create file3 and file4
+		file3Name := filepath.Join(tmpDir, "file3.log")
+		os.WriteFile(file3Name, []byte("1st line to file3\n"), os.ModePerm)
+		os.Rename(file3Name, filepath.Join(tmpDir, "file4.log"))
+		os.WriteFile(file3Name, []byte("1st line to file4\n"), os.ModePerm)
+
+		// Expect Input component to recognize "created"-type log rotation
+		// and send blank data to initialize a new log workflow
+		assert.Equal(t, RenameEvent{Filepath: file3Name, LastReadPosition: 0}, <-i.InputChan)
+
+		i.Close()
+
+		wg.Wait()
+	})
 }
 
 func TestRegisterTailer(t *testing.T) {
