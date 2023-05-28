@@ -60,7 +60,6 @@ func (r Registry) GetRegistryPath() string {
 }
 
 func (r *Registry) UpdateRegistry(regDir string) error {
-
 	// Write back to registry
 	newRegistrar, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {

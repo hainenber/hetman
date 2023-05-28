@@ -1,53 +1,59 @@
 package registry
 
 import (
-	"reflect"
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestGetRegistry(t *testing.T) {
-	type args struct {
-		regDir string
+	t.Run("blank registry", func(t *testing.T) {
+		tmpDir, _ := os.MkdirTemp("", "")
+		defer os.RemoveAll(tmpDir)
+		reg, err := GetRegistry(tmpDir)
+		assert.Nil(t, err)
+		assert.Equal(t,
+			&Registry{
+				Offsets:       map[string]int64{},
+				BufferedPaths: map[string]string{},
+				regPath:       filepath.Join(tmpDir, REGISTRY_FILENAME),
+			},
+			reg)
+	})
+}
+
+func TestUpdateRegistry(t *testing.T) {
+	tmpDir, _ := os.MkdirTemp("", "")
+	defer os.RemoveAll(tmpDir)
+	reg := Registry{
+		Offsets: map[string]int64{
+			"a": int64(20),
+		},
+		BufferedPaths: map[string]string{
+			"a": "b",
+			"c": "d",
+		},
+		regPath: filepath.Join(tmpDir, "hetman.registry.test.json"),
 	}
-	tests := []struct {
-		name    string
-		args    args
-		want    Registry
-		wantErr bool
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := GetRegistry(tt.args.regDir)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("GetRegistry() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("GetRegistry() = %v, want %v", got, tt.want)
-			}
-		})
-	}
+	assert.Nil(t, reg.UpdateRegistry(tmpDir))
 }
 
 func TestSaveLastPosition(t *testing.T) {
-	type args struct {
-		regDir            string
-		lastReadPositions map[string]int64
-	}
-	tests := []struct {
-		name    string
-		args    args
-		wantErr bool
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if err := SaveLastPosition(tt.args.regDir, tt.args.lastReadPositions); (err != nil) != tt.wantErr {
-				t.Errorf("SaveLastPosition() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
+	tmpDir, _ := os.MkdirTemp("", "")
+	defer os.RemoveAll(tmpDir)
+	assert.Nil(t, SaveLastPosition(tmpDir, map[string]int64{
+		"a": int64(1),
+		"b": int64(2),
+	}))
+}
+
+func TestSaveDiskBufferedFilePaths(t *testing.T) {
+	tmpDir, _ := os.MkdirTemp("", "")
+	defer os.RemoveAll(tmpDir)
+	assert.Nil(t, SaveDiskBufferedFilePaths(tmpDir, map[string]string{
+		"a": "b",
+		"c": "d",
+	}))
 }
