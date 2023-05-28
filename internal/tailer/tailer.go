@@ -108,6 +108,11 @@ func (t *Tailer) Run(buffers []*buffer.Buffer) {
 				}
 			}
 
+			// Skip to next iteration to catch context cancellation
+			if t.GetState() == state.Closed {
+				continue
+			}
+
 			// Relay tailed log line to next component in the workflow, buffer
 			for _, b := range buffers {
 				b.BufferChan <- pipeline.Data{
@@ -142,9 +147,9 @@ func (t *Tailer) Close() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	t.cancelFunc()
-
 	t.StateChan <- state.Closed
+
+	t.cancelFunc()
 
 	// Register last read position
 	offset, err := t.Tailer.Tell()
