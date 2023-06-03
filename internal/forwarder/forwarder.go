@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
-	"github.com/hainenber/hetman/internal/config"
 	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/rs/zerolog"
 	"github.com/samber/lo"
@@ -33,31 +32,41 @@ type Payload struct {
 
 type Forwarder struct {
 	backoff    *backoff.ExponentialBackOff
-	ctx        context.Context         // Context for forwarder struct, primarily for cancellation when needed
-	cancelFunc context.CancelFunc      // Context cancellation function
-	conf       *config.ForwarderConfig // Forwarder's config
-	httpClient *http.Client            // Forwarder's reusable HTTP client
-	LogChan    chan pipeline.Data      // Channel to receive logs from buffer stage
-	Signature  string
-	logger     zerolog.Logger
+	ctx        context.Context    // Context for forwarder struct, primarily for cancellation when needed
+	cancelFunc context.CancelFunc // Context cancellation function
+	httpClient *http.Client       // Forwarder's reusable HTTP client
+	LogChan    chan pipeline.Data // Channel to receive logs from buffer stage
+	logger     zerolog.Logger     // Dedicated logger
+	settings   *ForwarderSettings // Forwarder's settings
 }
 
-func NewForwarder(conf config.ForwarderConfig) *Forwarder {
+type ForwarderSettings struct {
+	URL             string
+	AddTags         map[string]string
+	CompressRequest bool
+	Signature       string // Signature from hashing entire forwarder struct
+	Source          string // Source of tailed logs, will be sent to downstream as 1 of associative labels
+}
+
+func NewForwarder(settings ForwarderSettings) *Forwarder {
 	ctx, cancelFunc := context.WithCancel(context.Background())
 
 	// For each failed delivery, maximum elapsed time for exp backoff is 5 seconds
 	backoffConfig := backoff.NewExponentialBackOff()
 	backoffConfig.MaxElapsedTime = 5 * time.Second
 
+	// Add "source" label with tailed filename as value
+	// Help distinguish log streams in single forwarded destination
+	settings.AddTags["source"] = settings.Source
+
 	return &Forwarder{
 		backoff:    backoffConfig,
 		ctx:        ctx,
 		cancelFunc: cancelFunc,
-		conf:       &conf,
 		httpClient: &http.Client{},
 		LogChan:    make(chan pipeline.Data, 1024),
 		logger:     zerolog.New(os.Stdout),
-		Signature:  conf.CreateForwarderSignature(),
+		settings:   &settings,
 	}
 }
 
@@ -81,7 +90,7 @@ func (f *Forwarder) Run(bufferChan chan pipeline.Data, backpressureChan chan int
 		// Send buffered logs in batch
 		// If failed, will queue log(s) back to buffer channel for next persistence
 		case line, ok := <-f.LogChan:
-			if !ok || line.LogLine == f.Signature {
+			if !ok || line.LogLine == f.settings.Signature {
 				continue
 			}
 			// In case received log isn't offset, set into batch
@@ -91,7 +100,7 @@ func (f *Forwarder) Run(bufferChan chan pipeline.Data, backpressureChan chan int
 				if !exists {
 					continue
 				}
-				if logLine.LogLine == f.Signature {
+				if logLine.LogLine == f.settings.Signature {
 					break
 				}
 				batch = append(batch, logLine)
@@ -124,7 +133,7 @@ func (f *Forwarder) Run(bufferChan chan pipeline.Data, backpressureChan chan int
 func (f *Forwarder) Flush(bufferChan chan pipeline.Data) []error {
 	var errors []error
 	for line := range f.LogChan {
-		if line.LogLine == f.Signature {
+		if line.LogLine == f.settings.Signature {
 			continue
 		}
 		if err := f.forward(line); err != nil {
@@ -162,7 +171,7 @@ func (f *Forwarder) forward(forwardArgs ...pipeline.Data) error {
 		payload, err := json.Marshal(Payload{
 			Streams: []PayloadStream{
 				{
-					Stream: f.conf.AddTags,
+					Stream: f.settings.AddTags,
 					Values: payload,
 				},
 			},
@@ -173,7 +182,7 @@ func (f *Forwarder) forward(forwardArgs ...pipeline.Data) error {
 		bufferedPayload := bytes.NewBuffer(payload)
 
 		// If enabled, compress payload before sending
-		if f.conf.CompressRequest {
+		if f.settings.CompressRequest {
 			bufferedPayload = new(bytes.Buffer)
 			gzipWriter := gzip.NewWriter(bufferedPayload)
 			gzipWriter.Write(payload)
@@ -182,14 +191,14 @@ func (f *Forwarder) forward(forwardArgs ...pipeline.Data) error {
 
 		// Initialize POST request to log servers
 		// Since we're sending data as JSON data, the header must be set as well
-		req, err := http.NewRequest(http.MethodPost, f.conf.URL, bufferedPayload)
+		req, err := http.NewRequest(http.MethodPost, f.settings.URL, bufferedPayload)
 		if err != nil {
 			return err
 		}
 
 		// Set approriate header(s)
 		req.Header.Set("Content-Type", "application/json")
-		if f.conf.CompressRequest {
+		if f.settings.CompressRequest {
 			req.Header.Set("Content-Encoding", "gzip")
 		}
 
@@ -211,4 +220,8 @@ func (f *Forwarder) forward(forwardArgs ...pipeline.Data) error {
 	}
 
 	return backoff.Retry(innerForwardFunc, f.backoff)
+}
+
+func (f *Forwarder) GetSignature() string {
+	return f.settings.Signature
 }

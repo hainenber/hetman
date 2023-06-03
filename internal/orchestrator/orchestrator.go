@@ -240,8 +240,14 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 		// Create a buffer associative with each forwarder
 		var buffers []*buffer.Buffer
 		for _, fwdConf := range workflowOpts.forwarderConfigs {
-			fwd := forwarder.NewForwarder(fwdConf)
-			fwdBuffer := buffer.NewBuffer(fwd.Signature)
+			fwd := forwarder.NewForwarder(forwarder.ForwarderSettings{
+				URL:             fwdConf.URL,
+				AddTags:         fwdConf.AddTags,
+				CompressRequest: fwdConf.CompressRequest,
+				Signature:       fwdConf.CreateForwarderSignature(),
+				Source:          translatedPath,
+			})
+			fwdBuffer := buffer.NewBuffer(fwd.GetSignature())
 
 			// If enabled, read disk-persisted logs from prior file, if exists
 			if o.config.GlobalConfig.DiskBufferPersistence {
