@@ -11,7 +11,7 @@ require (
 	github.com/nxadm/tail v1.4.8
 	github.com/rs/zerolog v1.29.1
 	github.com/samber/lo v1.38.1
-	github.com/stretchr/testify v1.8.3
+	github.com/stretchr/testify v1.8.4
 )
 
 require (
