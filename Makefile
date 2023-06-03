@@ -12,8 +12,8 @@ lint:
 
 run:
 	rm -rf ./bin && mkdir ./bin
-	seq 1 3 > /tmp/nginx.log
-	[[ -f /tmp/hetman.registry.json ]] && truncate -s 0 /tmp/hetman.registry.json 
+	rm -rf /tmp/tmp_nginx && mkdir -p /tmp/tmp_nginx/ && seq 1 3 > /tmp/tmp_nginx/nginx.log
+	[[ -f /tmp/hetman.registry.json ]] && truncate -s 0 /tmp/hetman.registry.json || continue
 	CGO_ENABLED=0 go build -o bin ./cmd/hetman
 	./bin/hetman
 

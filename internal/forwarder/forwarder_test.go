@@ -28,14 +28,25 @@ func prepareTestForwarder(urlOverride string) *Forwarder {
 	if urlOverride != "" {
 		fwdCfg.URL = urlOverride
 	}
-	return NewForwarder(fwdCfg)
+	return NewForwarder(ForwarderSettings{
+		URL:       fwdCfg.URL,
+		AddTags:   fwdCfg.AddTags,
+		Signature: fwdCfg.CreateForwarderSignature(),
+		Source:    "test",
+	})
 }
 
 func TestNewForwarder(t *testing.T) {
 	fwd := prepareTestForwarder("")
 	assert.NotNil(t, fwd)
 	assert.Equal(t, 1024, cap(fwd.LogChan))
-	assert.Equal(t, "687474703a2f2f6c6f63616c686f73743a38303838666f6f626172", fwd.Signature)
+	assert.NotNil(t, fwd.settings)
+}
+
+func TestGetSignature(t *testing.T) {
+	fwd := prepareTestForwarder("")
+	assert.NotNil(t, fwd)
+	assert.Equal(t, "687474703a2f2f6c6f63616c686f73743a38303838666f6f626172", fwd.GetSignature())
 }
 
 func TestForwarderRun(t *testing.T) {
@@ -48,6 +59,10 @@ func TestForwarderRun(t *testing.T) {
 		server := generateMockForwarderDestination(func(w http.ResponseWriter, r *http.Request) {
 			payload := Payload{}
 			json.NewDecoder(r.Body).Decode(&payload)
+
+			// Ensure "source" from tailed file is being sent properly
+			assert.Equal(t, "test", payload.Streams[0].Stream["source"])
+
 			for i := range make([]bool, 2) {
 				assert.Contains(t, payload.Streams[0].Values[i], fmt.Sprint(i))
 			}
@@ -85,6 +100,10 @@ func TestForwarderRun(t *testing.T) {
 			assertDecodedPayload := func(expectedPayload []string) {
 				payload := Payload{}
 				json.NewDecoder(r.Body).Decode(&payload)
+
+				// Ensure "source" from tailed file is being sent properly
+				assert.Equal(t, "test", payload.Streams[0].Stream["source"])
+
 				batch := lo.Map(payload.Streams[0].Values, func(x []string, index int) string {
 					return x[1]
 				})
@@ -174,6 +193,8 @@ func TestForwarderForward(t *testing.T) {
 		switch reqCount {
 		case 0:
 			json.NewDecoder(r.Body).Decode(&payload)
+			// Ensure "source" from tailed file is being sent properly
+			assert.Equal(t, "test", payload.Streams[0].Stream["source"])
 			assert.Equal(t, []string{"123", "success abc"}, payload.Streams[0].Values[0])
 		case 1:
 			json.NewDecoder(r.Body).Decode(&payload)
@@ -235,7 +256,7 @@ func TestForwarderForward(t *testing.T) {
 			}, payload.Streams[0].Values)
 		})
 		fwd := prepareTestForwarder(server.URL)
-		fwd.conf.CompressRequest = true
+		fwd.settings.CompressRequest = true
 		err := fwd.forward(
 			pipeline.Data{Timestamp: "1", LogLine: "a"},
 			pipeline.Data{Timestamp: "2", LogLine: "b"},
