@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/signal"
 	"sync"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/hainenber/hetman/internal/config"
 	"github.com/hainenber/hetman/internal/orchestrator"
+	"github.com/hainenber/hetman/internal/telemetry/metrics"
 )
 
 func main() {
@@ -23,11 +25,23 @@ func main() {
 		reloadedConfigChan = make(chan *config.Config, 1) // Only allow 1 reload attempt at the same time
 	)
 
+	// Add a hook into main logger for registering internal error as metrics
+	logger = logger.Hook(metrics.InternalErrorLoggerHook{})
+
 	// Intercept termination signals like Ctrl-C
 	// Graceful shutdown and cleanup resources (goroutines and channels)
 	terminationSigs := make(chan os.Signal, 1)
 	defer close(terminationSigs)
 	signal.Notify(terminationSigs, os.Interrupt, syscall.SIGTERM)
+
+	// Instantiate OpenTelemetry's global metric provider
+	// It will shut down once the orchestrator loop breaks out as well
+	// Persisting throughout reloads
+	closeMeterFunc, err := metrics.InitiateMetricProvider(&logger)
+	if err != nil {
+		logger.Fatal().Err(err).Msg("")
+	}
+	defer closeMeterFunc()
 
 	reloadSigs := make(chan os.Signal, 1)
 	reloadSigs <- syscall.SIGHUP
@@ -40,23 +54,30 @@ func main() {
 out:
 	for {
 		select {
+
 		case <-terminationSigs:
 			if mainOrchestrator != nil {
 				doneChan <- struct{}{}
 				<-doneCleanupChan
 			}
 			break out
+
 		case <-reloadSigs:
 			if mainOrchestrator != nil {
 				doneChan <- struct{}{}
 				<-doneCleanupChan
 			}
+
+			// Submit metrics on received restart signals
+			metrics.Meters.ReceivedRestartCount.Add(context.Background(), 1)
+
 			// Read newly reloaded config from changed file
 			conf, err := config.NewConfig(config.DefaultConfigPath)
 			if err != nil {
 				logger.Fatal().Err(err).Msgf("Cannot read config from %s", config.DefaultConfigPath)
 			}
 			logger.Info().Msgf("Finish reading config %s", config.DefaultConfigPath)
+
 			// Sent new conf to channel
 			reloadedConfigChan <- conf
 
