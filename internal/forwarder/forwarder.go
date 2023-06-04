@@ -13,6 +13,7 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/hainenber/hetman/internal/pipeline"
+	"github.com/hainenber/hetman/internal/telemetry/metrics"
 	"github.com/rs/zerolog"
 	"github.com/samber/lo"
 )
@@ -87,7 +88,6 @@ func (f *Forwarder) Run(bufferChan chan pipeline.Data, backpressureChan chan int
 			for _, err := range f.Flush(bufferChan) {
 				f.logger.Error().Err(err).Msg("")
 			}
-			close(backpressureChan)
 			return
 
 		// Send buffered logs in batch

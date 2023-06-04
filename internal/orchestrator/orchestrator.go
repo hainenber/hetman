@@ -175,6 +175,7 @@ func (o *Orchestrator) Run() struct{} {
 	// Once receiving signals, close all components registered to
 	// the orchestrator
 	o.Close()
+	o.logger.Info().Msg("Done closing all components")
 
 	// Perform cleanup once everything has been shut down
 	o.Cleanup()
@@ -311,6 +312,8 @@ func (o *Orchestrator) Close() {
 	o.forwarderWg.Wait()
 
 	for _, bp := range o.backpressureEngines {
+		// Close all backpressure's update channel
+		close(bp.UpdateChan)
 		bp.Close()
 	}
 	o.logger.Info().Msg("Sent close signal to created backpressure engines")
