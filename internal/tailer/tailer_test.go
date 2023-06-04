@@ -8,8 +8,14 @@ import (
 	"github.com/hainenber/hetman/internal/backpressure"
 	"github.com/hainenber/hetman/internal/buffer"
 	"github.com/hainenber/hetman/internal/tailer/state"
+	"github.com/hainenber/hetman/internal/telemetry/metrics"
 	"github.com/stretchr/testify/assert"
 )
+
+func TestMain(m *testing.M) {
+	metrics.InitializeNopMetricProvider()
+	os.Exit(m.Run())
+}
 
 func createTestTailer(opts TailerOptions) (*Tailer, *os.File, error) {
 	tmpFile, _ := os.CreateTemp("", "tailer-test-")

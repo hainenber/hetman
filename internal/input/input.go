@@ -8,6 +8,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/hainenber/hetman/internal/tailer"
+	"github.com/hainenber/hetman/internal/telemetry/metrics"
 	"github.com/rs/zerolog"
 )
 
@@ -56,10 +57,16 @@ func NewInput(opts InputOptions) (*Input, error) {
 		i.watcher = watcher
 	}
 
+	// Submit metrics on newly initialized input
+	metrics.Meters.InitializedComponents["inputs"].Add(i.ctx, 1)
+
 	return i, nil
 }
 
 func (i *Input) Close() {
+	// Submit metrics on closed input
+	metrics.Meters.InitializedComponents["inputs"].Add(i.ctx, -1)
+
 	i.cancelFunc()
 }
 

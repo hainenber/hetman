@@ -13,6 +13,7 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/hainenber/hetman/internal/pipeline"
+	"github.com/hainenber/hetman/internal/telemetry/metrics"
 	"github.com/rs/zerolog"
 	"github.com/samber/lo"
 )
@@ -59,6 +60,9 @@ func NewForwarder(settings ForwarderSettings) *Forwarder {
 	// Help distinguish log streams in single forwarded destination
 	settings.AddTags["source"] = settings.Source
 
+	// Submit metrics on newly initialized forwarder
+	metrics.Meters.InitializedComponents["forwarders"].Add(ctx, 1)
+
 	return &Forwarder{
 		backoff:    backoffConfig,
 		ctx:        ctx,
@@ -84,7 +88,6 @@ func (f *Forwarder) Run(bufferChan chan pipeline.Data, backpressureChan chan int
 			for _, err := range f.Flush(bufferChan) {
 				f.logger.Error().Err(err).Msg("")
 			}
-			close(backpressureChan)
 			return
 
 		// Send buffered logs in batch
@@ -118,6 +121,9 @@ func (f *Forwarder) Run(bufferChan chan pipeline.Data, backpressureChan chan int
 					return agg + len(item.LogLine)
 				}, 0)
 				backpressureChan <- -batchedLogSize
+
+				// Submit metrics on successful forwarded logs
+				metrics.Meters.ForwardedLogCount.Add(f.ctx, int64(batchedLogSize))
 			}
 
 			// Restore batch array to zero length
@@ -141,11 +147,20 @@ func (f *Forwarder) Flush(bufferChan chan pipeline.Data) []error {
 			bufferChan <- line
 		}
 	}
+
+	// Submit metrics on successful flush-forwarded logs
+	if len(errors) == 0 {
+		metrics.Meters.ForwardedLogCount.Add(f.ctx, 1)
+	}
+
 	return errors
 }
 
 // Call function to cancel context
 func (f *Forwarder) Close() {
+	// Submit metrics on closed forwarder
+	metrics.Meters.InitializedComponents["forwarders"].Add(f.ctx, -1)
+
 	f.cancelFunc()
 }
 

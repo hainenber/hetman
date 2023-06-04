@@ -6,15 +6,22 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"sync"
 	"testing"
 
 	"github.com/hainenber/hetman/internal/config"
 	"github.com/hainenber/hetman/internal/pipeline"
+	"github.com/hainenber/hetman/internal/telemetry/metrics"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 )
+
+func TestMain(m *testing.M) {
+	metrics.InitializeNopMetricProvider()
+	os.Exit(m.Run())
+}
 
 func generateMockForwarderDestination(handlerFunc func(w http.ResponseWriter, r *http.Request)) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(handlerFunc))
@@ -143,6 +150,8 @@ func TestForwarderRun(t *testing.T) {
 		}()
 
 		wg.Wait()
+
+		close(backpressureChan)
 
 		var totalDecrement int
 		for decrement := range backpressureChan {

@@ -6,8 +6,14 @@ import (
 	"testing"
 
 	"github.com/hainenber/hetman/internal/pipeline"
+	"github.com/hainenber/hetman/internal/telemetry/metrics"
 	"github.com/stretchr/testify/assert"
 )
+
+func TestMain(m *testing.M) {
+	metrics.InitializeNopMetricProvider()
+	os.Exit(m.Run())
+}
 
 func TestNewBuffer(t *testing.T) {
 	buffer := NewBuffer("abc")
