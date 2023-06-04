@@ -8,8 +8,14 @@ import (
 	"testing"
 
 	"github.com/hainenber/hetman/internal/tailer"
+	"github.com/hainenber/hetman/internal/telemetry/metrics"
 	"github.com/stretchr/testify/assert"
 )
+
+func TestMain(m *testing.M) {
+	metrics.InitializeNopMetricProvider()
+	os.Exit(m.Run())
+}
 
 func appendToFile(filename, newLine string) {
 	f, _ := os.OpenFile(filename,

@@ -12,6 +12,7 @@ import (
 	"github.com/hainenber/hetman/internal/config"
 	"github.com/hainenber/hetman/internal/forwarder"
 	"github.com/hainenber/hetman/internal/tailer/state"
+	"github.com/hainenber/hetman/internal/telemetry/metrics"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -19,6 +20,11 @@ type TestOrchestratorOption struct {
 	doneChan           chan struct{}
 	serverURL          string
 	backpressureOption int
+}
+
+func TestMain(m *testing.M) {
+	metrics.InitializeNopMetricProvider()
+	os.Exit(m.Run())
 }
 
 func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string, *os.File) {
