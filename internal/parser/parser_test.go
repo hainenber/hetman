@@ -5,6 +5,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/hainenber/hetman/internal/buffer"
 	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/hainenber/hetman/internal/telemetry/metrics"
 	"github.com/rs/zerolog"
@@ -113,4 +114,26 @@ func TestParserRun_HappyPaths(t *testing.T) {
 			},
 		})
 	})
+}
+
+func TestLoadPersistedLogs(t *testing.T) {
+	b := buffer.NewBuffer("abc")
+	b.BufferChan <- pipeline.Data{LogLine: "123"}
+
+	ps := NewParser(ParserOptions{
+		Format:  "",
+		Pattern: "",
+		Logger:  zerolog.Nop(),
+	})
+
+	bufFile, err := b.PersistToDisk()
+	assert.Nil(t, err)
+	assert.FileExists(t, bufFile)
+
+	err = ps.LoadPersistedLogs(bufFile)
+	assert.Nil(t, err)
+	assert.NoFileExists(t, bufFile)
+
+	persisted := <-ps.ParserChan
+	assert.Equal(t, pipeline.Data{LogLine: "123"}, persisted)
 }

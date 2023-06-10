@@ -1,7 +1,6 @@
 package buffer
 
 import (
-	"bufio"
 	"context"
 	"os"
 	"time"
@@ -99,31 +98,4 @@ func (b Buffer) PersistToDisk() (string, error) {
 	}
 
 	return bufferedFilename, nil
-}
-
-// LoadPersistedLogs reads disk-persisted logs to channel for re-delivery
-// Only to be called during program startup
-func (b Buffer) LoadPersistedLogs(filename string) error {
-	bufferedFile, err := os.Open(filename)
-	if err != nil {
-		return err
-	}
-	defer bufferedFile.Close()
-
-	fileScanner := bufio.NewScanner(bufferedFile)
-	fileScanner.Split(bufio.ScanLines)
-
-	// Unload disk-buffered logs into channel for re-delivery
-	for fileScanner.Scan() {
-		bufferedLine := fileScanner.Text()
-		b.BufferChan <- pipeline.Data{LogLine: bufferedLine}
-	}
-
-	// Clean up previously temp file used for persistence as offloading has finished
-	err = os.Remove(filename)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }

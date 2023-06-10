@@ -1,7 +1,9 @@
 package parser
 
 import (
+	"bufio"
 	"context"
+	"os"
 
 	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/hainenber/hetman/internal/telemetry/metrics"
@@ -128,6 +130,33 @@ func (p *Parser) Close() {
 	metrics.Meters.InitializedComponents["parser"].Add(p.ctx, -1)
 
 	p.cancelFunc()
+}
+
+// LoadPersistedLogs reads disk-persisted logs to channel for re-delivery
+// Only to be called during program startup
+func (p *Parser) LoadPersistedLogs(filename string) error {
+	bufferedFile, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	defer bufferedFile.Close()
+
+	fileScanner := bufio.NewScanner(bufferedFile)
+	fileScanner.Split(bufio.ScanLines)
+
+	// Unload disk-buffered logs into channel for re-delivery
+	for fileScanner.Scan() {
+		bufferedLine := fileScanner.Text()
+		p.ParserChan <- pipeline.Data{LogLine: bufferedLine}
+	}
+
+	// Clean up previously temp file used for persistence as offloading has finished
+	err = os.Remove(filename)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func getKeyValuePairs(val *fastjson.Value) (map[string]string, error) {
