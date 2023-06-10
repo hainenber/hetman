@@ -9,8 +9,11 @@ import (
 	"github.com/hainenber/hetman/internal/config"
 	"github.com/hainenber/hetman/internal/forwarder"
 	"github.com/hainenber/hetman/internal/input"
+	"github.com/hainenber/hetman/internal/parser"
+	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/hainenber/hetman/internal/registry"
 	"github.com/hainenber/hetman/internal/tailer"
+	"github.com/hainenber/hetman/internal/workflow"
 	"github.com/rs/zerolog"
 	"github.com/samber/lo"
 )
@@ -18,19 +21,21 @@ import (
 type Orchestrator struct {
 	inputWg        sync.WaitGroup
 	tailerWg       sync.WaitGroup
+	parserWg       sync.WaitGroup
 	bufferWg       sync.WaitGroup
 	forwarderWg    sync.WaitGroup
 	backpressureWg sync.WaitGroup
 
-	config             *config.Config
-	pathToForwarderMap map[string][]config.ForwarderConfig
-	logger             zerolog.Logger
-	registrar          *registry.Registry
-	doneChan           chan struct{}
+	config    *config.Config
+	workflows map[string]workflow.Workflow
+	logger    zerolog.Logger
+	registrar *registry.Registry
+	doneChan  chan struct{}
 
 	inputs              []*input.Input
 	tailers             []*tailer.Tailer
 	buffers             []*buffer.Buffer
+	parsers             []*parser.Parser
 	backpressureEngines []*backpressure.Backpressure
 	forwarders          []*forwarder.Forwarder
 }
@@ -44,7 +49,7 @@ type OrchestratorOption struct {
 func NewOrchestrator(options OrchestratorOption) *Orchestrator {
 	// Get path-to-forwarder map from validated config
 	// This will be foundational in later input generation
-	pathToForwarderMap, err := options.Config.Process()
+	workflows, err := options.Config.Process()
 	if err != nil {
 		options.Logger.Fatal().Err(err).Msg("")
 	}
@@ -59,17 +64,18 @@ func NewOrchestrator(options OrchestratorOption) *Orchestrator {
 	options.Logger.Info().Msgf("Finish loading registry file at %v ", registrar.GetRegistryPath())
 
 	return &Orchestrator{
-		doneChan:           options.DoneChan,
-		config:             options.Config,
-		logger:             options.Logger,
-		registrar:          registrar,
-		pathToForwarderMap: pathToForwarderMap,
+		doneChan:  options.DoneChan,
+		config:    options.Config,
+		logger:    options.Logger,
+		registrar: registrar,
+		workflows: workflows,
 	}
 }
 
 type WorkflowOptions struct {
 	input            *input.Input
-	forwarderConfigs []config.ForwarderConfig
+	parserConfig     workflow.ParserConfig
+	forwarderConfigs []workflow.ForwarderConfig
 	readPosition     int64
 }
 
@@ -91,6 +97,7 @@ func processPathToForwarderMap(inputToForwarderMap InputToForwarderMap) (InputTo
 			} else {
 				result[translatedPath] = &WorkflowOptions{
 					input:            workflowOpts.input,
+					parserConfig:     workflowOpts.parserConfig,
 					forwarderConfigs: workflowOpts.forwarderConfigs,
 				}
 			}
@@ -98,7 +105,7 @@ func processPathToForwarderMap(inputToForwarderMap InputToForwarderMap) (InputTo
 	}
 
 	for translatedPath, workflowOpts := range result {
-		result[translatedPath].forwarderConfigs = lo.UniqBy(workflowOpts.forwarderConfigs, func(fc config.ForwarderConfig) string {
+		result[translatedPath].forwarderConfigs = lo.UniqBy(workflowOpts.forwarderConfigs, func(fc workflow.ForwarderConfig) string {
 			return fc.CreateForwarderSignature()
 		})
 	}
@@ -113,7 +120,7 @@ func (o *Orchestrator) Run() struct{} {
 
 	// Initialize input from filepath
 	o.logger.Info().Msg("Initializing inputs...")
-	for path, fwdConf := range o.pathToForwarderMap {
+	for path, wf := range o.workflows {
 		i, err := input.NewInput(input.InputOptions{
 			Logger: o.logger,
 			Path:   path,
@@ -132,12 +139,13 @@ func (o *Orchestrator) Run() struct{} {
 		// Embed input for each path-to-forwarder mapping
 		processedPathToForwarderMap[path] = &WorkflowOptions{
 			input:            i,
-			forwarderConfigs: fwdConf,
+			parserConfig:     wf.Parser,
+			forwarderConfigs: wf.Forwarders,
 		}
 
 		// Generate log workflow for new files detected from watcher
 		o.inputWg.Add(1)
-		go func(innerFwdConf []config.ForwarderConfig) {
+		go func(innerFwdConf []workflow.ForwarderConfig) {
 			defer o.inputWg.Done()
 
 			// If watcher is not init'ed, the target paths are not glob-like
@@ -156,7 +164,7 @@ func (o *Orchestrator) Run() struct{} {
 					},
 				})
 			}
-		}(fwdConf)
+		}(wf.Forwarders)
 	}
 
 	// Group forwarder configs by input's path
@@ -236,7 +244,14 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 		// This is to get old, renamed file's last read position
 		// to continue tailing from correct offset for newly renamed file
 		workflowOpts.input.RegisterTailer(t)
-		o.logger.Info().Msgf("Tailer for path %v has been registered", translatedPath)
+		o.logger.Info().Msgf("Tailer for path %v has been registered into input", translatedPath)
+
+		// Each workflow will have a single parser
+		ps := parser.NewParser(parser.ParserOptions{
+			Format:  workflowOpts.parserConfig.Format,
+			Pattern: workflowOpts.parserConfig.Pattern,
+			Logger:  o.logger,
+		})
 
 		// Create a buffer associative with each forwarder
 		var buffers []*buffer.Buffer
@@ -250,10 +265,10 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 			})
 			fwdBuffer := buffer.NewBuffer(fwd.GetSignature())
 
-			// If enabled, read disk-persisted logs from prior file, if exists
+			// If enabled, read disk-persisted logs from prior saved file, if exists
 			if o.config.GlobalConfig.DiskBufferPersistence {
 				if bufferedPath, exists := o.registrar.BufferedPaths[fwdBuffer.GetSignature()]; exists {
-					fwdBuffer.LoadPersistedLogs(bufferedPath)
+					ps.LoadPersistedLogs(bufferedPath)
 				}
 			}
 
@@ -261,12 +276,14 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 			o.buffers = append(o.buffers, fwdBuffer)
 			o.forwarders = append(o.forwarders, fwd)
 
+			// Start forwarding log to downstream
 			o.forwarderWg.Add(1)
 			go func() {
 				defer o.forwarderWg.Done()
 				fwd.Run(fwdBuffer.BufferChan, backpressureEngine.UpdateChan)
 			}()
 
+			// Start buffering logs
 			o.bufferWg.Add(1)
 			go func() {
 				defer o.bufferWg.Done()
@@ -274,13 +291,22 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 			}()
 		}
 
+		// Start tailing files
 		o.tailers = append(o.tailers, t)
 		o.tailerWg.Add(1)
 		go func() {
 			defer o.tailerWg.Done()
-			t.Run(buffers)
+			t.Run(ps.ParserChan)
 		}()
 		o.logger.Info().Msgf("Tailer for path \"%v\" is now running", t.Tailer.Filename)
+
+		// Start parsing scrapped logs
+		o.parsers = append(o.parsers, ps)
+		o.parserWg.Add(1)
+		go func() {
+			defer o.parserWg.Done()
+			ps.Run(lo.Map(buffers, func(item *buffer.Buffer, _ int) chan pipeline.Data { return item.BufferChan }))
+		}()
 	}
 }
 
@@ -304,6 +330,12 @@ func (o *Orchestrator) Close() {
 	}
 	o.logger.Info().Msg("Sent close signal to created buffers")
 	o.bufferWg.Wait()
+
+	for _, p := range o.parsers {
+		p.Close()
+	}
+	o.logger.Info().Msg("Sent close signal to created parsers")
+	o.parserWg.Wait()
 
 	for _, f := range o.forwarders {
 		f.Close()

@@ -61,7 +61,7 @@ func NewForwarder(settings ForwarderSettings) *Forwarder {
 	settings.AddTags["source"] = settings.Source
 
 	// Submit metrics on newly initialized forwarder
-	metrics.Meters.InitializedComponents["forwarders"].Add(ctx, 1)
+	metrics.Meters.InitializedComponents["forwarder"].Add(ctx, 1)
 
 	return &Forwarder{
 		backoff:    backoffConfig,
@@ -159,7 +159,7 @@ func (f *Forwarder) Flush(bufferChan chan pipeline.Data) []error {
 // Call function to cancel context
 func (f *Forwarder) Close() {
 	// Submit metrics on closed forwarder
-	metrics.Meters.InitializedComponents["forwarders"].Add(f.ctx, -1)
+	metrics.Meters.InitializedComponents["forwarder"].Add(f.ctx, -1)
 
 	f.cancelFunc()
 }
@@ -167,15 +167,19 @@ func (f *Forwarder) Close() {
 // TODO: Generalize this method to send logs to other downstream log consumers
 // Only support Loki atm
 func (f *Forwarder) forward(forwardArgs ...pipeline.Data) error {
-	// Initialize timestamp in case not present in args
 	// Setting up log payload
-	payload := make([][]string, len(forwardArgs))
+	payload := make([]PayloadStream, len(forwardArgs))
 	for i, arg := range forwardArgs {
 		sentTime := arg.Timestamp
+		// Initialize timestamp in case it isn't present in args
 		if sentTime == "" {
 			sentTime = fmt.Sprint(time.Now().UnixNano())
 		}
-		payload[i] = []string{sentTime, arg.LogLine}
+		// TODO: Not to use high-cardinality parsed fields as log labels
+		payload[i] = PayloadStream{
+			Stream: lo.Assign(f.settings.AddTags, arg.Parsed),
+			Values: [][]string{{sentTime, arg.LogLine}},
+		}
 	}
 
 	// Wrap sections of making HTTP request to downstream and process response
@@ -184,12 +188,7 @@ func (f *Forwarder) forward(forwardArgs ...pipeline.Data) error {
 	innerForwardFunc := func() error {
 		// Fetch tags from config
 		payload, err := json.Marshal(Payload{
-			Streams: []PayloadStream{
-				{
-					Stream: f.settings.AddTags,
-					Values: payload,
-				},
-			},
+			Streams: payload,
 		})
 		if err != nil {
 			return err

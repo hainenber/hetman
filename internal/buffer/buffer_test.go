@@ -62,19 +62,3 @@ func TestPersistToDisk(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, "123", string(persistedLogs))
 }
-
-func TestLoadPersistedLogs(t *testing.T) {
-	b := NewBuffer("abc")
-	b.BufferChan <- pipeline.Data{LogLine: "123"}
-
-	bufFile, err := b.PersistToDisk()
-	assert.Nil(t, err)
-	assert.FileExists(t, bufFile)
-
-	err = b.LoadPersistedLogs(bufFile)
-	assert.Nil(t, err)
-	assert.NoFileExists(t, bufFile)
-
-	persisted := <-b.BufferChan
-	assert.Equal(t, pipeline.Data{LogLine: "123"}, persisted)
-}

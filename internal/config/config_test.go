@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/hainenber/hetman/internal/workflow"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -23,7 +24,7 @@ func prepareTestConfig() (*Config, []string, string) {
 
 	globTmpDir := filepath.Join(tmpDir, "*.log")
 	conf := &Config{
-		Targets: []TargetConfig{
+		Targets: []workflow.TargetConfig{
 			{
 				Paths: []string{
 					globTmpDir,
@@ -65,7 +66,7 @@ func TestNewConfig(t *testing.T) {
 
 func TestDetectDuplicateTargetID(t *testing.T) {
 	conf := &Config{
-		Targets: []TargetConfig{
+		Targets: []workflow.TargetConfig{
 			{
 				Id: "1",
 			},
@@ -94,8 +95,8 @@ func TestProcess(t *testing.T) {
 		defer testServer.Close()
 		conf, _, tmpDir := prepareTestConfig()
 		defer cleanup(tmpDir)
-		conf.Targets[0].Forwarders = []ForwarderConfig{
-			{URL: testServer.URL + "/loki/v1/api/push"},
+		conf.Targets[0].Forwarders = []workflow.ForwarderConfig{
+			{URL: testServer.URL + "/loki/v1/api/push", ProbeReadiness: true},
 		}
 		processed, err := conf.Process()
 		assert.NotNil(t, processed)
@@ -108,7 +109,8 @@ func TestProcess(t *testing.T) {
 		defer testServer.Close()
 		conf, _, tmpDir := prepareTestConfig()
 		defer cleanup(tmpDir)
-		conf.Targets[0].Forwarders = []ForwarderConfig{
+
+		conf.Targets[0].Forwarders = []workflow.ForwarderConfig{
 			{URL: testServer.URL + "/loki/v1/api/push", ProbeReadiness: true},
 		}
 		processed, err := conf.Process()
@@ -149,12 +151,4 @@ func TestProbeReadiness(t *testing.T) {
 		err := probeReadiness(testServer.URL+"/loki/v1/api/push", "/ready")
 		assert.NotNil(t, err)
 	})
-}
-
-func TestCreateForwarderSignature(t *testing.T) {
-	fwdCfg := ForwarderConfig{
-		URL:     "http://localhost:8088",
-		AddTags: map[string]string{"a": "b", "foo": "bar"},
-	}
-	assert.Equal(t, "687474703a2f2f6c6f63616c686f73743a3830383861666f6f62626172", fwdCfg.CreateForwarderSignature())
 }

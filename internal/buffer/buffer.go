@@ -1,7 +1,6 @@
 package buffer
 
 import (
-	"bufio"
 	"context"
 	"os"
 	"time"
@@ -22,7 +21,7 @@ func NewBuffer(signature string) *Buffer {
 	ctx, cancelFunc := context.WithCancel(context.Background())
 
 	// Submit metrics on newly initialized buffer
-	metrics.Meters.InitializedComponents["buffers"].Add(ctx, 1)
+	metrics.Meters.InitializedComponents["buffer"].Add(ctx, 1)
 
 	return &Buffer{
 		ctx:        ctx,
@@ -61,7 +60,7 @@ func (b *Buffer) Run(fwdChan chan pipeline.Data) {
 
 func (b Buffer) Close() {
 	// Submit metrics on closed buffer
-	metrics.Meters.InitializedComponents["buffers"].Add(b.ctx, -1)
+	metrics.Meters.InitializedComponents["buffer"].Add(b.ctx, -1)
 
 	b.cancelFunc()
 }
@@ -99,31 +98,4 @@ func (b Buffer) PersistToDisk() (string, error) {
 	}
 
 	return bufferedFilename, nil
-}
-
-// LoadPersistedLogs reads disk-persisted logs to channel for re-delivery
-// Only to be called during program startup
-func (b Buffer) LoadPersistedLogs(filename string) error {
-	bufferedFile, err := os.Open(filename)
-	if err != nil {
-		return err
-	}
-	defer bufferedFile.Close()
-
-	fileScanner := bufio.NewScanner(bufferedFile)
-	fileScanner.Split(bufio.ScanLines)
-
-	// Unload disk-buffered logs into channel for re-delivery
-	for fileScanner.Scan() {
-		bufferedLine := fileScanner.Text()
-		b.BufferChan <- pipeline.Data{LogLine: bufferedLine}
-	}
-
-	// Clean up previously temp file used for persistence as offloading has finished
-	err = os.Remove(filename)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
