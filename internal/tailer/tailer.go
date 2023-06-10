@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/hainenber/hetman/internal/backpressure"
-	"github.com/hainenber/hetman/internal/buffer"
 	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/hainenber/hetman/internal/tailer/state"
 	"github.com/hainenber/hetman/internal/telemetry/metrics"
@@ -82,7 +81,7 @@ func NewTailer(tailerOptions TailerOptions) (*Tailer, error) {
 	}, nil
 }
 
-func (t *Tailer) Run(buffers []*buffer.Buffer) {
+func (t *Tailer) Run(parserChan chan pipeline.Data) {
 	t.SetState(state.Running)
 
 	for {
@@ -121,11 +120,9 @@ func (t *Tailer) Run(buffers []*buffer.Buffer) {
 			metrics.Meters.IngestedLogCount.Add(t.ctx, 1)
 
 			// Relay tailed log line to next component in the workflow, buffer
-			for _, b := range buffers {
-				b.BufferChan <- pipeline.Data{
-					Timestamp: fmt.Sprint(time.Now().UnixNano()),
-					LogLine:   line.Text,
-				}
+			parserChan <- pipeline.Data{
+				Timestamp: fmt.Sprint(time.Now().UnixNano()),
+				LogLine:   line.Text,
 			}
 
 		default:
