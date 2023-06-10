@@ -22,7 +22,7 @@ func NewBuffer(signature string) *Buffer {
 	ctx, cancelFunc := context.WithCancel(context.Background())
 
 	// Submit metrics on newly initialized buffer
-	metrics.Meters.InitializedComponents["buffers"].Add(ctx, 1)
+	metrics.Meters.InitializedComponents["buffer"].Add(ctx, 1)
 
 	return &Buffer{
 		ctx:        ctx,
@@ -61,7 +61,7 @@ func (b *Buffer) Run(fwdChan chan pipeline.Data) {
 
 func (b Buffer) Close() {
 	// Submit metrics on closed buffer
-	metrics.Meters.InitializedComponents["buffers"].Add(b.ctx, -1)
+	metrics.Meters.InitializedComponents["buffer"].Add(b.ctx, -1)
 
 	b.cancelFunc()
 }

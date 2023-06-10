@@ -61,7 +61,7 @@ func NewForwarder(settings ForwarderSettings) *Forwarder {
 	settings.AddTags["source"] = settings.Source
 
 	// Submit metrics on newly initialized forwarder
-	metrics.Meters.InitializedComponents["forwarders"].Add(ctx, 1)
+	metrics.Meters.InitializedComponents["forwarder"].Add(ctx, 1)
 
 	return &Forwarder{
 		backoff:    backoffConfig,
@@ -159,7 +159,7 @@ func (f *Forwarder) Flush(bufferChan chan pipeline.Data) []error {
 // Call function to cancel context
 func (f *Forwarder) Close() {
 	// Submit metrics on closed forwarder
-	metrics.Meters.InitializedComponents["forwarders"].Add(f.ctx, -1)
+	metrics.Meters.InitializedComponents["forwarder"].Add(f.ctx, -1)
 
 	f.cancelFunc()
 }

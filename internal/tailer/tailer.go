@@ -70,7 +70,7 @@ func NewTailer(tailerOptions TailerOptions) (*Tailer, error) {
 	ctx, cancelFunc := context.WithCancel(context.Background())
 
 	// Submit metrics on newly initialized tailer
-	metrics.Meters.InitializedComponents["tailers"].Add(ctx, 1)
+	metrics.Meters.InitializedComponents["tailer"].Add(ctx, 1)
 
 	return &Tailer{
 		ctx:                ctx,
@@ -155,7 +155,7 @@ func (t *Tailer) Close() {
 	defer t.mu.Unlock()
 
 	// Submit metrics on closed tailer
-	metrics.Meters.InitializedComponents["tailers"].Add(t.ctx, -1)
+	metrics.Meters.InitializedComponents["tailer"].Add(t.ctx, -1)
 
 	// Set tailer to closed state
 	t.StateChan <- state.Closed

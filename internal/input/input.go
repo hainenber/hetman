@@ -58,14 +58,14 @@ func NewInput(opts InputOptions) (*Input, error) {
 	}
 
 	// Submit metrics on newly initialized input
-	metrics.Meters.InitializedComponents["inputs"].Add(i.ctx, 1)
+	metrics.Meters.InitializedComponents["input"].Add(i.ctx, 1)
 
 	return i, nil
 }
 
 func (i *Input) Close() {
 	// Submit metrics on closed input
-	metrics.Meters.InitializedComponents["inputs"].Add(i.ctx, -1)
+	metrics.Meters.InitializedComponents["input"].Add(i.ctx, -1)
 
 	i.cancelFunc()
 }
