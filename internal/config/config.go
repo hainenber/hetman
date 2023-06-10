@@ -19,6 +19,8 @@ type ForwarderConfig struct {
 	URL             string            `koanf:"url"`
 	AddTags         map[string]string `koanf:"add_tags"`
 	CompressRequest bool              `koanf:"compress_request"`
+	ProbeReadiness  bool              `koanf:"probe_readiness"`
+}
 }
 
 type TargetConfig struct {
