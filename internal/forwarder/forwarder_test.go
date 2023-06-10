@@ -11,9 +11,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/hainenber/hetman/internal/config"
 	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/hainenber/hetman/internal/telemetry/metrics"
+	"github.com/hainenber/hetman/internal/workflow"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 )
@@ -28,7 +28,7 @@ func generateMockForwarderDestination(handlerFunc func(w http.ResponseWriter, r 
 }
 
 func prepareTestForwarder(urlOverride string) *Forwarder {
-	fwdCfg := config.ForwarderConfig{
+	fwdCfg := workflow.ForwarderConfig{
 		URL:     "http://localhost:8088",
 		AddTags: map[string]string{"foo": "bar"},
 	}
@@ -71,7 +71,7 @@ func TestForwarderRun(t *testing.T) {
 			assert.Equal(t, "test", payload.Streams[0].Stream["source"])
 
 			for i := range make([]bool, 2) {
-				assert.Contains(t, payload.Streams[0].Values[i], fmt.Sprint(i))
+				assert.Contains(t, payload.Streams[i].Values[0][1], fmt.Sprint(i))
 			}
 			defer fwd.Close()
 		})
@@ -111,8 +111,8 @@ func TestForwarderRun(t *testing.T) {
 				// Ensure "source" from tailed file is being sent properly
 				assert.Equal(t, "test", payload.Streams[0].Stream["source"])
 
-				batch := lo.Map(payload.Streams[0].Values, func(x []string, index int) string {
-					return x[1]
+				batch := lo.Map(payload.Streams, func(x PayloadStream, index int) string {
+					return x.Values[0][1]
 				})
 				assert.Equal(t, expectedPayload, batch)
 				reqCount++
@@ -204,15 +204,63 @@ func TestForwarderForward(t *testing.T) {
 			json.NewDecoder(r.Body).Decode(&payload)
 			// Ensure "source" from tailed file is being sent properly
 			assert.Equal(t, "test", payload.Streams[0].Stream["source"])
-			assert.Equal(t, []string{"123", "success abc"}, payload.Streams[0].Values[0])
+			// Ensure payload containing labels from parsed log line
+			assert.Equal(t,
+				Payload{Streams: []PayloadStream{
+					{
+						Stream: map[string]string{
+							"source":       "test",
+							"foo":          "bar",
+							"parsed_tag_1": "a",
+							"parsed_tag_2": "b",
+						},
+						Values: [][]string{
+							{"123", "success abc"},
+						},
+					},
+				}},
+				payload,
+			)
 		case 1:
 			json.NewDecoder(r.Body).Decode(&payload)
-			assert.Len(t, payload.Streams[0].Values, 3)
-			assert.Equal(t, [][]string{
-				{"1", "success def1"},
-				{"2", "success def2"},
-				{"3", "success def3"},
-			}, payload.Streams[0].Values)
+			assert.Equal(t,
+				Payload{Streams: []PayloadStream{
+					{
+						Stream: map[string]string{
+							"source":       "test",
+							"foo":          "bar",
+							"parsed_tag_1": "a",
+							"parsed_tag_2": "b",
+						},
+						Values: [][]string{
+							{"1", "success def1"},
+						},
+					},
+					{
+						Stream: map[string]string{
+							"source":       "test",
+							"foo":          "bar",
+							"parsed_tag_1": "a",
+							"parsed_tag_2": "b",
+						},
+						Values: [][]string{
+							{"2", "success def2"},
+						},
+					},
+					{
+						Stream: map[string]string{
+							"source":       "test",
+							"foo":          "bar",
+							"parsed_tag_1": "a",
+							"parsed_tag_2": "b",
+						},
+						Values: [][]string{
+							{"3", "success def3"},
+						},
+					},
+				}},
+				payload,
+			)
 		}
 		reqCount++
 	}))
@@ -228,16 +276,24 @@ func TestForwarderForward(t *testing.T) {
 
 	t.Run("successfully forward 1 line of log", func(t *testing.T) {
 		fwd := prepareTestForwarder(server.URL)
-		err := fwd.forward(pipeline.Data{Timestamp: "123", LogLine: "success abc"})
+		err := fwd.forward(pipeline.Data{
+			Timestamp: "123",
+			LogLine:   "success abc",
+			Parsed: map[string]string{
+				"parsed_tag_1": "a",
+				"parsed_tag_2": "b",
+			},
+		})
 		assert.Nil(t, err)
 	})
 
 	t.Run("sucessfully ship multiple lines of log", func(t *testing.T) {
 		fwd := prepareTestForwarder(server.URL)
+		parsed := map[string]string{"parsed_tag_1": "a", "parsed_tag_2": "b"}
 		logPayload := []pipeline.Data{
-			{Timestamp: "1", LogLine: "success def1"},
-			{Timestamp: "2", LogLine: "success def2"},
-			{Timestamp: "3", LogLine: "success def3"},
+			{Timestamp: "1", LogLine: "success def1", Parsed: parsed},
+			{Timestamp: "2", LogLine: "success def2", Parsed: parsed},
+			{Timestamp: "3", LogLine: "success def3", Parsed: parsed},
 		}
 		err := fwd.forward(logPayload...)
 		assert.Nil(t, err)
@@ -247,7 +303,7 @@ func TestForwarderForward(t *testing.T) {
 		fwd := prepareTestForwarder(failedServer.URL)
 		err := fwd.forward(pipeline.Data{Timestamp: "1", LogLine: "failed abc"})
 		assert.NotNil(t, err)
-		assert.GreaterOrEqual(t, 5, failedReqCount)
+		assert.GreaterOrEqual(t, failedReqCount, 5)
 	})
 
 	t.Run("successfully send a compressed batch of 2 log lines", func(t *testing.T) {
@@ -259,10 +315,26 @@ func TestForwarderForward(t *testing.T) {
 			defer gzipReader.Close()
 			defer r.Body.Close()
 			assert.Nil(t, json.NewDecoder(gzipReader).Decode(&payload))
-			assert.Equal(t, [][]string{
-				{"1", "a"},
-				{"2", "b"},
-			}, payload.Streams[0].Values)
+			assert.Equal(t, []PayloadStream{
+				{
+					Stream: map[string]string{
+						"source": "test",
+						"foo":    "bar",
+					},
+					Values: [][]string{
+						{"1", "a"},
+					},
+				},
+				{
+					Stream: map[string]string{
+						"source": "test",
+						"foo":    "bar",
+					},
+					Values: [][]string{
+						{"2", "b"},
+					},
+				},
+			}, payload.Streams)
 		})
 		fwd := prepareTestForwarder(server.URL)
 		fwd.settings.CompressRequest = true

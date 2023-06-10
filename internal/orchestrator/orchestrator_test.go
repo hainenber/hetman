@@ -13,6 +13,7 @@ import (
 	"github.com/hainenber/hetman/internal/forwarder"
 	"github.com/hainenber/hetman/internal/tailer/state"
 	"github.com/hainenber/hetman/internal/telemetry/metrics"
+	"github.com/hainenber/hetman/internal/workflow"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -39,13 +40,13 @@ func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string
 				RegistryDir:             tmpRegistryDir,
 				BackpressureMemoryLimit: opt.backpressureOption,
 			},
-			Targets: []config.TargetConfig{
+			Targets: []workflow.TargetConfig{
 				{
 					Id: "test",
 					Paths: []string{
 						tmpLogFile.Name(),
 					},
-					Forwarders: []config.ForwarderConfig{
+					Forwarders: []workflow.ForwarderConfig{
 						{
 							URL:     opt.serverURL,
 							AddTags: map[string]string{"a": "b", "c": "d"},
@@ -82,22 +83,22 @@ func TestProcessPathToForwarderMap(t *testing.T) {
 	globTmpNginxDir := filepath.Join(tmpNginxDir, "*")
 	globTmpSysDir := filepath.Join(tmpSyslogDir, "*")
 
-	testFwdConfig1 := config.ForwarderConfig{URL: "abc.com"}
-	testFwdConfig2 := config.ForwarderConfig{URL: "def.com"}
+	testFwdConfig1 := workflow.ForwarderConfig{URL: "abc.com"}
+	testFwdConfig2 := workflow.ForwarderConfig{URL: "def.com"}
 
 	arg := InputToForwarderMap{
 		globTmpNginxDir: &WorkflowOptions{
-			forwarderConfigs: []config.ForwarderConfig{
+			forwarderConfigs: []workflow.ForwarderConfig{
 				testFwdConfig1,
 			},
 		},
 		tmpNginxFile.Name(): &WorkflowOptions{
-			forwarderConfigs: []config.ForwarderConfig{
+			forwarderConfigs: []workflow.ForwarderConfig{
 				testFwdConfig1,
 			},
 		},
 		globTmpSysDir: &WorkflowOptions{
-			forwarderConfigs: []config.ForwarderConfig{
+			forwarderConfigs: []workflow.ForwarderConfig{
 				testFwdConfig1,
 				testFwdConfig2,
 			},
@@ -106,12 +107,12 @@ func TestProcessPathToForwarderMap(t *testing.T) {
 
 	expected := InputToForwarderMap{
 		tmpNginxFile.Name(): &WorkflowOptions{
-			forwarderConfigs: []config.ForwarderConfig{
+			forwarderConfigs: []workflow.ForwarderConfig{
 				testFwdConfig1,
 			},
 		},
 		tmpSyslogFile.Name(): &WorkflowOptions{
-			forwarderConfigs: []config.ForwarderConfig{
+			forwarderConfigs: []workflow.ForwarderConfig{
 				testFwdConfig1,
 				testFwdConfig2,
 			},
@@ -244,13 +245,12 @@ func TestOrchestratorBackpressure(t *testing.T) {
 			reqCount++
 			payload := forwarder.Payload{}
 			json.NewDecoder(r.Body).Decode(&payload)
-			payloadLen := len(payload.Streams[0].Values)
+			payloadLen := len(payload.Streams)
 			if payloadLen == 2 {
 				logDeliveredChan <- struct{}{}
 				logDeliveredChan <- struct{}{}
 				return
 			}
-			logDeliveredChan <- struct{}{}
 		}))
 		defer func() {
 			onlineServer.Close()
