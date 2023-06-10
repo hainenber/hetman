@@ -126,7 +126,7 @@ func TestProcess(t *testing.T) {
 		defer testServer.Close()
 		conf, _, tmpDir := prepareTestConfig()
 		defer cleanup(tmpDir)
-		conf.Targets[0].Forwarders = []ForwarderConfig{
+		conf.Targets[0].Forwarders = []workflow.ForwarderConfig{
 			{URL: testServer.URL + "/loki/v1/api/push", ProbeReadiness: false},
 		}
 		processed, err := conf.Process()
