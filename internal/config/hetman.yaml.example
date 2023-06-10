@@ -15,6 +15,7 @@ targets:
           source: nginx
           dest: loki
         compress_request: true 
+        probe_readiness: false
   - id: misc
     paths:
       - testdata/syslog/*.log

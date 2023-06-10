@@ -109,12 +109,29 @@ func TestProcess(t *testing.T) {
 		defer testServer.Close()
 		conf, _, tmpDir := prepareTestConfig()
 		defer cleanup(tmpDir)
+
 		conf.Targets[0].Forwarders = []workflow.ForwarderConfig{
 			{URL: testServer.URL + "/loki/v1/api/push", ProbeReadiness: true},
 		}
 		processed, err := conf.Process()
 		assert.Nil(t, processed)
 		assert.NotNil(t, err)
+	})
+	t.Run("process config without probing readiness since probe_readiness:false", func(t *testing.T) {
+		testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/reader" {
+				w.WriteHeader(http.StatusInternalServerError)
+			}
+		}))
+		defer testServer.Close()
+		conf, _, tmpDir := prepareTestConfig()
+		defer cleanup(tmpDir)
+		conf.Targets[0].Forwarders = []ForwarderConfig{
+			{URL: testServer.URL + "/loki/v1/api/push", ProbeReadiness: false},
+		}
+		processed, err := conf.Process()
+		assert.NotNil(t, processed)
+		assert.Nil(t, err)
 	})
 }
 
