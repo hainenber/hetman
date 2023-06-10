@@ -7,25 +7,13 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
+	"github.com/hainenber/hetman/internal/workflow"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
 )
-
-type ForwarderConfig struct {
-	URL             string            `koanf:"url"`
-	AddTags         map[string]string `koanf:"add_tags"`
-	CompressRequest bool              `koanf:"compress_request"`
-}
-
-type TargetConfig struct {
-	Id         string            `koanf:"id"`
-	Paths      []string          `koanf:"paths"`
-	Forwarders []ForwarderConfig `koanf:"forwarders"`
-}
 
 type GlobalConfig struct {
 	RegistryDir             string `koanf:"registry_directory"`
@@ -34,8 +22,8 @@ type GlobalConfig struct {
 }
 
 type Config struct {
-	GlobalConfig GlobalConfig   `koanf:"global"`
-	Targets      []TargetConfig `koanf:"targets"`
+	GlobalConfig GlobalConfig            `koanf:"global"`
+	Targets      []workflow.TargetConfig `koanf:"targets"`
 }
 
 const (
@@ -104,7 +92,7 @@ func probeReadiness(fwdUrl string, readinessPath string) error {
 }
 
 // Process performs baseline config check and generate path-to-forwarder map
-func (c Config) Process() (map[string][]ForwarderConfig, error) {
+func (c Config) Process() (map[string]workflow.Workflow, error) {
 	// Prevent duplicate ID of targets
 	err := c.DetectDuplicateTargetID()
 	if err != nil {
@@ -112,7 +100,7 @@ func (c Config) Process() (map[string][]ForwarderConfig, error) {
 	}
 
 	// Check if target paths are readable by current user
-	// If encounter glob paths, check if base directory readable
+	// If encounter glob paths, check if base directory is readable
 	for _, target := range c.Targets {
 		for _, targetPath := range target.Paths {
 			if strings.Contains(targetPath, "*") {
@@ -138,9 +126,11 @@ func (c Config) Process() (map[string][]ForwarderConfig, error) {
 				err = fmt.Errorf("empty forwarder's URL config for target %s", target.Id)
 				return nil, err
 			}
-			if strings.Contains(fwd.URL, "/loki") {
-				if err = probeReadiness(fwd.URL, "/ready"); err != nil {
-					return nil, err
+			if fwd.ProbeReadiness {
+				if strings.Contains(fwd.URL, "/loki") {
+					if err = probeReadiness(fwd.URL, "/ready"); err != nil {
+						return nil, err
+					}
 				}
 			}
 		}
@@ -149,46 +139,24 @@ func (c Config) Process() (map[string][]ForwarderConfig, error) {
 	// Convert target paths to "absolute path" format
 	// Consolidating unique paths to several matching forwarders
 	// to prevent duplicate tailers
-	pathToForwarderMap := make(map[string][]ForwarderConfig)
+	workflows := make(map[string]workflow.Workflow)
 	for _, target := range c.Targets {
 		for _, file := range target.Paths {
 			absPath, err := filepath.Abs(file)
 			if err != nil {
 				return nil, err
 			}
-			fwdConfs, ok := pathToForwarderMap[absPath]
+			fwdConfs, ok := workflows[absPath]
 			if ok {
-				pathToForwarderMap[absPath] = append(fwdConfs, target.Forwarders...)
+				fwdConfs.Forwarders = append(fwdConfs.Forwarders, target.Forwarders...)
 			} else {
-				pathToForwarderMap[absPath] = target.Forwarders
+				workflows[absPath] = workflow.Workflow{
+					Forwarders: target.Forwarders,
+					Parser:     target.Parser,
+				}
 			}
 		}
 	}
 
-	return pathToForwarderMap, nil
-}
-
-// CreateForwarderSignature generates signature for a forwarder by hashing its configuration values along with ordered tag key-values
-func (conf *ForwarderConfig) CreateForwarderSignature() string {
-	var (
-		tagKeys      []string
-		tagValues    []string
-		fwdConfParts []string
-	)
-
-	// Ensure tag key-value pairs are ordered
-	for k, v := range conf.AddTags {
-		tagKeys = append(tagKeys, k)
-		tagValues = append(tagValues, v)
-	}
-	sort.Strings(tagKeys)
-	sort.Strings(tagValues)
-
-	fwdConfParts = append(fwdConfParts, conf.URL)
-	fwdConfParts = append(fwdConfParts, tagKeys...)
-	fwdConfParts = append(fwdConfParts, tagValues...)
-
-	return fmt.Sprintf("%x",
-		[]byte(strings.Join(fwdConfParts, "")),
-	)
+	return workflows, nil
 }
