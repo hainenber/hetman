@@ -98,6 +98,11 @@ func (t *Tailer) Run(parserChan chan pipeline.Data) {
 			return
 
 		case line := <-t.Tailer.Lines:
+			// Discard unrecognized tailed message
+			if line == nil || line.Text == "" {
+				continue
+			}
+
 			lineSize := len(line.Text)
 
 			// Send log size to backpressure engine to check for desired state
