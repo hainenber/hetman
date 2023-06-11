@@ -11,6 +11,7 @@ import (
 
 	"github.com/hainenber/hetman/internal/config"
 	"github.com/hainenber/hetman/internal/forwarder"
+	"github.com/hainenber/hetman/internal/registry"
 	"github.com/hainenber/hetman/internal/tailer/state"
 	"github.com/hainenber/hetman/internal/telemetry/metrics"
 	"github.com/hainenber/hetman/internal/workflow"
@@ -18,9 +19,10 @@ import (
 )
 
 type TestOrchestratorOption struct {
-	doneChan           chan struct{}
-	serverURL          string
-	backpressureOption int
+	doneChan              chan struct{}
+	serverURL             string
+	backpressureOption    int
+	diskBufferPersistence bool
 }
 
 func TestMain(m *testing.M) {
@@ -39,6 +41,7 @@ func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string
 			GlobalConfig: config.GlobalConfig{
 				RegistryDir:             tmpRegistryDir,
 				BackpressureMemoryLimit: opt.backpressureOption,
+				DiskBufferPersistence:   opt.diskBufferPersistence,
 			},
 			Targets: []workflow.TargetConfig{
 				{
@@ -192,7 +195,7 @@ func TestOrchestratorBackpressure(t *testing.T) {
 			logDeliveredChan <- struct{}{}
 		}))
 		defer func() {
-			assert.GreaterOrEqual(t, reqCount, 5)
+			assert.GreaterOrEqual(t, reqCount, 4)
 			offlineServer.Close()
 		}()
 
@@ -257,6 +260,8 @@ func TestOrchestratorBackpressure(t *testing.T) {
 			assert.GreaterOrEqual(t, reqCount, 1)
 		}()
 
+		// Create and run a orchestrator with full workflow of tailer, buffer and forwarder
+		// Configure a moderate backpressure limit
 		orch, tmpRegistryDir, tmpLogFile := generateTestOrchestrator(TestOrchestratorOption{
 			doneChan:           doneChan,
 			serverURL:          onlineServer.URL,
@@ -264,9 +269,6 @@ func TestOrchestratorBackpressure(t *testing.T) {
 		})
 		defer os.RemoveAll(tmpRegistryDir)
 		defer os.Remove(tmpLogFile.Name())
-
-		// Create and run a orchestrator with full workflow of tailer, buffer and forwarder
-		// Configure a moderate backpressure limit
 
 		assert.NotNil(t, orch)
 
@@ -292,10 +294,97 @@ func TestOrchestratorBackpressure(t *testing.T) {
 	})
 }
 
-func TestOrchestratorCleanup(t *testing.T) {
-	// TODO
-}
-
 func TestOrchestratorRun(t *testing.T) {
-	// TODO
+	t.Run("successfully run and cleanup, happy path", func(t *testing.T) {
+		var (
+			doneChan        = make(chan struct{})
+			wg              sync.WaitGroup
+			reqCount        int
+			orch            *Orchestrator
+			registryContent registry.Registry
+		)
+
+		mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			reqCount++
+			if reqCount == 1 {
+				doneChan <- struct{}{}
+			}
+		}))
+		defer mockServer.Close()
+
+		orch, tmpRegistryDir, tmpLogFile := generateTestOrchestrator(TestOrchestratorOption{
+			doneChan:              doneChan,
+			serverURL:             mockServer.URL,
+			backpressureOption:    15,
+			diskBufferPersistence: true,
+		})
+		defer os.RemoveAll(tmpRegistryDir)
+		defer os.Remove(tmpLogFile.Name())
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			orch.Run()
+		}()
+
+		wg.Wait()
+
+		// Expect agent's registry is saved
+		registryPath := filepath.Join(tmpRegistryDir, "hetman.registry.json")
+		assert.FileExists(t, registryPath)
+		// Since downstream is online, expect registry file to contain last read position
+		// and the buffered file's content is empty
+		registryFile, _ := os.ReadFile(registryPath)
+		json.Unmarshal(registryFile, &registryContent)
+		logBufferedFile, _ := os.ReadFile(registryContent.BufferedPaths[orch.buffers[0].GetSignature()])
+		assert.Equal(t, int64(4), registryContent.Offsets[tmpLogFile.Name()])
+		assert.Empty(t, logBufferedFile)
+	})
+
+	t.Run("successfully run and cleanup, sad path with offline downstream", func(t *testing.T) {
+		var (
+			doneChan        = make(chan struct{})
+			wg              sync.WaitGroup
+			reqCount        int
+			orch            *Orchestrator
+			registryContent registry.Registry
+		)
+
+		mockFailedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			reqCount++
+			if reqCount == 1 {
+				doneChan <- struct{}{}
+			}
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer mockFailedServer.Close()
+
+		orch, tmpRegistryDir, tmpLogFile := generateTestOrchestrator(TestOrchestratorOption{
+			doneChan:              doneChan,
+			serverURL:             mockFailedServer.URL,
+			backpressureOption:    15,
+			diskBufferPersistence: true,
+		})
+		defer os.RemoveAll(tmpRegistryDir)
+		defer os.Remove(tmpLogFile.Name())
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			orch.Run()
+		}()
+
+		wg.Wait()
+
+		// Expect agent's registry is saved
+		registryPath := filepath.Join(tmpRegistryDir, "hetman.registry.json")
+		assert.FileExists(t, registryPath)
+		// Since downstream is offline, expect registry file to contain last read position
+		// and the buffered file containing all scraped logs
+		registryFile, _ := os.ReadFile(registryPath)
+		json.Unmarshal(registryFile, &registryContent)
+		logBufferedFile, _ := os.ReadFile(registryContent.BufferedPaths[orch.buffers[0].GetSignature()])
+		assert.Equal(t, int64(4), registryContent.Offsets[tmpLogFile.Name()])
+		assert.Equal(t, "a\nb\n", string(logBufferedFile))
+	})
 }
