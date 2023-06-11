@@ -8,6 +8,8 @@ targets:
     paths:
       - testdata/nginx/nginx.log 
       - testdata/nginx/*.log 
+    parser:
+      format: json
     forwarders:
       - url: http://localhost:3100/loki/api/v1/push
         add_tags:
