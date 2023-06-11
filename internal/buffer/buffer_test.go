@@ -60,5 +60,5 @@ func TestPersistToDisk(t *testing.T) {
 
 	persistedLogs, err := os.ReadFile(bufFile)
 	assert.Nil(t, err)
-	assert.Equal(t, "123", string(persistedLogs))
+	assert.Equal(t, "123\n", string(persistedLogs))
 }

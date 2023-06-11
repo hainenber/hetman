@@ -2,6 +2,7 @@ package buffer
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"time"
 
@@ -92,7 +93,7 @@ func (b Buffer) PersistToDisk() (string, error) {
 
 	for len(b.BufferChan) > 0 {
 		line := <-b.BufferChan
-		if _, err := f.WriteString(line.LogLine); err != nil {
+		if _, err := f.WriteString(fmt.Sprintf("%s\n", line.LogLine)); err != nil {
 			return "", err
 		}
 	}
