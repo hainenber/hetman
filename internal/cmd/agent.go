@@ -14,11 +14,23 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-func AgentMode() {
+type Agent struct {
+	Orchestrator *orchestrator.Orchestrator
+	ConfigFile   string
+}
+
+func (a *Agent) IsReady() bool {
+	if a.Orchestrator == nil {
+		return false
+	}
+	return a.Orchestrator.DoneInstantiated
+}
+
+func (a *Agent) Run() {
 	var (
-		mainOrchestrator   *orchestrator.Orchestrator
 		wg                 sync.WaitGroup
 		logger             = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+		terminationSigs    = make(chan os.Signal, 1)
 		doneChan           = make(chan struct{}, 1)
 		doneCleanupChan    = make(chan struct{}, 1)
 		reloadedConfigChan = make(chan *config.Config, 1) // Only allow 1 reload attempt at the same time
@@ -29,8 +41,10 @@ func AgentMode() {
 
 	// Intercept termination signals like Ctrl-C
 	// Graceful shutdown and cleanup resources (goroutines and channels)
-	terminationSigs := make(chan os.Signal, 1)
-	defer close(terminationSigs)
+	defer func() {
+		signal.Stop(terminationSigs)
+		close(terminationSigs)
+	}()
 	signal.Notify(terminationSigs, os.Interrupt, syscall.SIGTERM)
 
 	// Instantiate OpenTelemetry's global metric provider
@@ -44,7 +58,10 @@ func AgentMode() {
 
 	reloadSigs := make(chan os.Signal, 1)
 	reloadSigs <- syscall.SIGHUP
-	defer close(reloadSigs)
+	defer func() {
+		signal.Stop(reloadSigs)
+		close(reloadSigs)
+	}()
 	signal.Notify(reloadSigs, syscall.SIGHUP)
 
 	// Infinite loop that blocks main goroutine to handle either graceful reload or termination when corresponding signal(s) are received
@@ -55,14 +72,14 @@ out:
 		select {
 
 		case <-terminationSigs:
-			if mainOrchestrator != nil {
+			if a.Orchestrator != nil {
 				doneChan <- struct{}{}
 				<-doneCleanupChan
 			}
 			break out
 
 		case <-reloadSigs:
-			if mainOrchestrator != nil {
+			if a.Orchestrator != nil {
 				doneChan <- struct{}{}
 				<-doneCleanupChan
 			}
@@ -71,11 +88,11 @@ out:
 			metrics.Meters.ReceivedRestartCount.Add(context.Background(), 1)
 
 			// Read newly reloaded config from changed file
-			conf, err := config.NewConfig(config.DefaultConfigPath)
+			conf, err := config.NewConfig(a.ConfigFile)
 			if err != nil {
-				logger.Fatal().Err(err).Msgf("Cannot read config from %s", config.DefaultConfigPath)
+				logger.Fatal().Err(err).Msgf("Cannot read config from %s", a.ConfigFile)
 			}
-			logger.Info().Msgf("Finish reading config %s", config.DefaultConfigPath)
+			logger.Info().Msgf("Finish reading config %s", a.ConfigFile)
 
 			// Sent new conf to channel
 			reloadedConfigChan <- conf
@@ -83,7 +100,7 @@ out:
 		// Recreate orchestrator after receiving reload signal
 		case conf := <-reloadedConfigChan:
 			// Orchestrate operations for components
-			mainOrchestrator = orchestrator.NewOrchestrator(
+			a.Orchestrator = orchestrator.NewOrchestrator(
 				orchestrator.OrchestratorOption{
 					DoneChan: doneChan,
 					Logger:   logger,
@@ -95,7 +112,7 @@ out:
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				doneCleanupChan <- mainOrchestrator.Run()
+				doneCleanupChan <- a.Orchestrator.Run()
 			}()
 		}
 	}
