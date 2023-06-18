@@ -19,10 +19,11 @@ type ParserConfig struct {
 }
 
 type TargetConfig struct {
+	Forwarders []ForwarderConfig `koanf:"forwarders"`
 	Id         string            `koanf:"id"`
 	Paths      []string          `koanf:"paths"`
-	Forwarders []ForwarderConfig `koanf:"forwarders"`
 	Parser     ParserConfig      `koanf:"parser"`
+	Type       string            `koanf:"type"`
 }
 
 type Workflow struct {

@@ -9,8 +9,10 @@ import (
 )
 
 var (
-	Verbose bool
-	Mode    string
+	Verbose        bool
+	Mode           string
+	ConfigFile     string
+	AggregatorPort int
 )
 
 var rootCmd = &cobra.Command{
@@ -20,9 +22,16 @@ var rootCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		switch Mode {
 		case "agent":
-			internalCmd.AgentMode()
+			agent := internalCmd.Agent{
+				ConfigFile: ConfigFile,
+			}
+			agent.Run()
 		case "aggregator":
-			internalCmd.AggregatorMode()
+			aggregator := internalCmd.Aggregator{
+				ConfigFile: ConfigFile,
+				Port:       AggregatorPort,
+			}
+			aggregator.Run()
 		default:
 			fmt.Println("Invalid agent mode. Please check your input")
 		}
@@ -32,6 +41,8 @@ var rootCmd = &cobra.Command{
 func init() {
 	rootCmd.PersistentFlags().BoolVarP(&Verbose, "verbose", "v", false, "Toggle verbose output")
 	rootCmd.PersistentFlags().StringVar(&Mode, "mode", "agent", "Hetman's mode to run. Eligible values are \"agent\", \"aggregator\"")
+	rootCmd.PersistentFlags().StringVar(&ConfigFile, "config-file", "hetman.agent.yaml", "Config file for Hetman")
+	rootCmd.PersistentFlags().IntVar(&AggregatorPort, "aggregator-port", 8080, "Listening port for Hetman in aggregator mode")
 	rootCmd.MarkFlagRequired("mode")
 
 	rootCmd.AddCommand(versionCmd)

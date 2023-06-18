@@ -10,15 +10,23 @@ lint:
 	go fmt ./...
 	go test -cover ./...
 
-run:
+build:
 	docker-compose -f test/docker-compose.yml up -d
-	rm -rf ./bin && mkdir ./bin
-	rm -rf /tmp/tmp_nginx && mkdir -p /tmp/tmp_nginx/
+	[[ -d ./bin ]] || mkdir ./bin
+	[[ -d ./tmp/tmp_nginx ]] || mkdir -p /tmp/tmp_nginx/
 	echo '{"a":"1","b":"2"}' > /tmp/tmp_nginx/nginx.log
 	echo '{"c":"3","d":"4"}' > /tmp/tmp_nginx/nginx2.log
 	[[ -f /tmp/hetman.registry.json ]] && truncate -s 0 /tmp/hetman.registry.json || continue
 	CGO_ENABLED=0 go build -o bin ./cmd/hetman
-	./bin/hetman
+
+run-agent: build
+	./bin/hetman --mode=agent --config-file=hetman.agent.yaml
+
+run-aggregator: build
+	./bin/hetman --mode=aggregator --aggregator-port=3101 --config-file=hetman.aggregator.yaml
+
+test-aggregator:
+	curl -XPOST -H "Content-Type: application/json" -d @test/payload.json http://localhost:3101/logs -v
 
 kill:
 	ps aux | grep "hetman" | grep -v grep | awk '{ print $$2 }' | xargs kill -9
