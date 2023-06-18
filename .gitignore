@@ -2,7 +2,7 @@
 testdata
 
 # Genuine configs
-hetman.yaml
+hetman*yaml
 
 # Build binary 
 bin
