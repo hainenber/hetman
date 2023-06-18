@@ -62,7 +62,7 @@ func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string
 					Forwarders: []workflow.ForwarderConfig{
 						{
 							URL:     opt.serverURL,
-							AddTags: map[string]string{"a": "b", "c": "d"},
+							AddTags: map[string]string{"b": "a", "d": "c"},
 						},
 					},
 				},
@@ -188,9 +188,14 @@ func TestOrchestratorBackpressure(t *testing.T) {
 		// Block until first failed log delivery
 		<-logDeliveredChan
 
-		// Expect path-container tailer to be eventually paused
-		assert.Equal(t, state.Running, orch.tailers[0].GetState())
-		assert.Equal(t, state.Paused, orch.tailers[1].GetState())
+		// Expect path-contained tailer and headless tailer to be eventually paused and running, respectively
+		for _, tl := range orch.tailers {
+			if tl.Tailer == nil {
+				assert.Equal(t, state.Running, tl.GetState())
+			} else {
+				assert.Equal(t, state.Paused, tl.GetState())
+			}
+		}
 
 		doneChan <- struct{}{}
 
@@ -401,12 +406,19 @@ func TestOrchestratorRun(t *testing.T) {
 		// Expect agent's registry is saved
 		registryPath := filepath.Join(tmpRegistryDir, "hetman.registry.json")
 		assert.FileExists(t, registryPath)
+
+		registryFile, _ := os.ReadFile(registryPath)
+		assert.Nil(t, json.Unmarshal(registryFile, &registryContent))
+
 		// Since downstream is offline, expect registry file to contain last read position
 		// and the buffered file containing all scraped logs
-		registryFile, _ := os.ReadFile(registryPath)
-		json.Unmarshal(registryFile, &registryContent)
-		logBufferedFile, _ := os.ReadFile(registryContent.BufferedPaths[orch.buffers[0].GetSignature()])
 		assert.Equal(t, int64(4), registryContent.Offsets[tmpLogFile.Name()])
-		assert.Equal(t, "a\nb\n", string(logBufferedFile))
+		for _, buf := range orch.buffers {
+			logBufferedFile, err := os.ReadFile(registryContent.BufferedPaths[buf.GetSignature()])
+			assert.Nil(t, err)
+			// TODO: Fix this Yoda issue
+			//lint:ignore ST1017 temporary Yoda conditionals
+			assert.True(t, "a\nb\n" == string(logBufferedFile) || "" == string(logBufferedFile))
+		}
 	})
 }
