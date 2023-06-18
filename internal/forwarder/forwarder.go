@@ -58,7 +58,9 @@ func NewForwarder(settings ForwarderSettings) *Forwarder {
 
 	// Add "source" label with tailed filename as value
 	// Help distinguish log streams in single forwarded destination
-	settings.AddTags["source"] = settings.Source
+	if settings.AddTags != nil && settings.Source != "" {
+		settings.AddTags["source"] = settings.Source
+	}
 
 	// Submit metrics on newly initialized forwarder
 	metrics.Meters.InitializedComponents["forwarder"].Add(ctx, 1)
@@ -177,7 +179,7 @@ func (f *Forwarder) forward(forwardArgs ...pipeline.Data) error {
 		}
 		// TODO: Not to use high-cardinality parsed fields as log labels
 		payload[i] = PayloadStream{
-			Stream: lo.Assign(f.settings.AddTags, arg.Parsed),
+			Stream: lo.Assign(f.settings.AddTags, arg.Parsed, arg.Labels),
 			Values: [][]string{{sentTime, arg.LogLine}},
 		}
 	}
