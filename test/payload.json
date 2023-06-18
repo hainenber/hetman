@@ -1,0 +1,20 @@
+{
+    "streams": [
+        {
+            "logs": [
+                [
+                    "1",
+                    "First line"
+                ],
+                [
+                    "2",
+                    "Second line"
+                ]
+            ],
+            "labels": {
+                "source": "http",
+                "purpose": "test"
+            }
+        }
+    ]
+}

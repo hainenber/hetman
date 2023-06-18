@@ -25,6 +25,9 @@ run-agent: build
 run-aggregator: build
 	./bin/hetman --mode=aggregator --aggregator-port=3101 --config-file=hetman.aggregator.yaml
 
+test-aggregator:
+	curl -XPOST -H "Content-Type: application/json" -d @test/payload.json http://localhost:3101/logs -v
+
 kill:
 	ps aux | grep "hetman" | grep -v grep | awk '{ print $$2 }' | xargs kill -9
 
