@@ -7,4 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
-- Augment agent's command structure to support rich CLI features (subcommand, flags, arguments, etc)
+- Augment agent's command structure to support rich CLI features (subcommand, flags, arguments, etc).
+### Added
+- HTTP endpoint for agent's aggregator mode at `/logs`.
+- Aggregator mode. 
+
