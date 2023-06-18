@@ -9,10 +9,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/hainenber/hetman/internal/workflow"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
+	"github.com/samber/lo"
 )
 
 type GlobalConfig struct {
@@ -99,33 +101,44 @@ func (c Config) Process() (map[string]workflow.Workflow, error) {
 		return nil, err
 	}
 
+	// Ensure target ID doesn't contain backslash
+	for _, target := range c.Targets {
+		if strings.Contains(target.Id, "/") {
+			return nil, fmt.Errorf("invalid target ID: %s should not contain backslash", target.Id)
+		}
+	}
+
 	// Check if target paths are readable by current user
 	// If encounter glob paths, check if base directory is readable
+	// Only applicable to "file"-type targets
 	for _, target := range c.Targets {
-		for _, targetPath := range target.Paths {
-			if strings.Contains(targetPath, "*") {
-				_, err := os.ReadDir(filepath.Dir(targetPath))
-				if err != nil {
-					return nil, err
-				}
-			} else {
-				_, err := os.Open(targetPath)
-				if err != nil {
-					return nil, err
+		if target.Type == "file" {
+			for _, targetPath := range target.Paths {
+				if strings.Contains(targetPath, "*") {
+					_, err := os.ReadDir(filepath.Dir(targetPath))
+					if err != nil {
+						return nil, err
+					}
+				} else {
+					_, err := os.Open(targetPath)
+					if err != nil {
+						return nil, err
+					}
 				}
 			}
 		}
 	}
 
-	// Ensure none of forwarder's URL are empty
-	// Probe readiness for downstream services
-	// TODO: add readiness probe for other popular downstreams as well
 	for _, target := range c.Targets {
+		// Ensure none of forwarder's URL are empty
 		for _, fwd := range target.Forwarders {
 			if fwd.URL == "" {
 				err = fmt.Errorf("empty forwarder's URL config for target %s", target.Id)
 				return nil, err
 			}
+
+			// Probe readiness for downstream services
+			// TODO: add readiness probe for other popular downstreams as well
 			if fwd.ProbeReadiness {
 				if strings.Contains(fwd.URL, "/loki") {
 					if err = probeReadiness(fwd.URL, "/ready"); err != nil {
@@ -137,20 +150,36 @@ func (c Config) Process() (map[string]workflow.Workflow, error) {
 	}
 
 	// Convert target paths to "absolute path" format
-	// Consolidating unique paths to several matching forwarders
+	// Consolidate unique paths to several matching forwarders
 	// to prevent duplicate tailers
 	workflows := make(map[string]workflow.Workflow)
 	for _, target := range c.Targets {
-		for _, file := range target.Paths {
-			absPath, err := filepath.Abs(file)
-			if err != nil {
-				return nil, err
+		// Create headless workflows, i.e. workflow not having inputs
+		if len(target.Paths) == 0 {
+			if headlessWorkflowId, ok := lo.Coalesce(target.Id, uuid.New().String()); ok {
+				workflows[headlessWorkflowId] = workflow.Workflow{
+					Forwarders: target.Forwarders,
+					Parser:     target.Parser,
+				}
 			}
-			fwdConfs, ok := workflows[absPath]
+		}
+
+		for _, file := range target.Paths {
+			targetPath := file
+			// Get absolute format for target's paths
+			// Only applicable to "file"-type targets
+			if target.Type == "file" {
+				targetPath, err = filepath.Abs(file)
+				if err != nil {
+					return nil, err
+				}
+			}
+
+			fwdConfs, ok := workflows[targetPath]
 			if ok {
 				fwdConfs.Forwarders = append(fwdConfs.Forwarders, target.Forwarders...)
 			} else {
-				workflows[absPath] = workflow.Workflow{
+				workflows[targetPath] = workflow.Workflow{
 					Forwarders: target.Forwarders,
 					Parser:     target.Parser,
 				}

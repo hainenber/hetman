@@ -26,9 +26,19 @@ func prepareTestConfig() (*Config, []string, string) {
 	conf := &Config{
 		Targets: []workflow.TargetConfig{
 			{
+				Type: "file",
 				Paths: []string{
 					globTmpDir,
 					fnames[0],
+				},
+			},
+			{
+				Id: "foo",
+				Forwarders: []workflow.ForwarderConfig{
+					{
+						URL:            "abc.com",
+						ProbeReadiness: false,
+					},
 				},
 			},
 		},
@@ -42,7 +52,7 @@ func cleanup(tmpDir string) {
 }
 
 func TestNewConfig(t *testing.T) {
-	conf, err := NewConfig("hetman.yaml.example")
+	conf, err := NewConfig("hetman.agent.yaml.example")
 	if err != nil {
 		t.Errorf("expect nil, got %v", err)
 	}
@@ -84,12 +94,28 @@ func TestDetectDuplicateTargetID(t *testing.T) {
 
 func TestProcess(t *testing.T) {
 	t.Parallel()
+
 	t.Run("successfully process placeholder config", func(t *testing.T) {
 		conf, _, tmpDir := prepareTestConfig()
 		defer cleanup(tmpDir)
-		_, err := conf.Process()
+		processed, err := conf.Process()
 		assert.Nil(t, err)
+
+		// Expect headless workflow got produced
+		assert.Contains(t, processed, "foo")
+
 	})
+
+	t.Run("failed to process backslahs ", func(t *testing.T) {
+		conf, _, tmpDir := prepareTestConfig()
+		defer cleanup(tmpDir)
+		conf.Targets[0].Id = "backslash/containing/target/id"
+
+		processed, err := conf.Process()
+		assert.Nil(t, processed)
+		assert.NotNil(t, err)
+	})
+
 	t.Run("successfully process config with readied downstream", func(t *testing.T) {
 		testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 		defer testServer.Close()

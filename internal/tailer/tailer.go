@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strings"
 	"sync"
-	"time"
 
 	"github.com/hainenber/hetman/internal/backpressure"
 	"github.com/hainenber/hetman/internal/pipeline"
@@ -25,6 +25,7 @@ type Tailer struct {
 	logger             zerolog.Logger
 	state              state.TailerState
 	StateChan          chan state.TailerState
+	UpstreamDataChan   chan pipeline.Data
 	BackpressureEngine *backpressure.Backpressure
 }
 
@@ -53,17 +54,24 @@ func NewTailer(tailerOptions TailerOptions) (*Tailer, error) {
 	}
 
 	// Create tailer
-	tailer, err := tail.TailFile(
-		tailerOptions.File,
-		tail.Config{
-			Follow:   true,
-			ReOpen:   true,
-			Logger:   tailerLogger,
-			Location: location,
-		},
+	var (
+		instantiatedTailer *tail.Tail
+		err                error
 	)
-	if err != nil {
-		return nil, err
+	if strings.Contains(tailerOptions.File, "/") {
+		instantiatedTailer, err = tail.TailFile(
+			tailerOptions.File,
+			tail.Config{
+				Follow:   true,
+				ReOpen:   true,
+				Logger:   tailerLogger,
+				Location: location,
+			},
+		)
+		if err != nil {
+			return nil, err
+		}
+
 	}
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
@@ -74,9 +82,10 @@ func NewTailer(tailerOptions TailerOptions) (*Tailer, error) {
 	return &Tailer{
 		ctx:                ctx,
 		cancelFunc:         cancelFunc,
-		Tailer:             tailer,
+		Tailer:             instantiatedTailer,
 		logger:             tailerOptions.Logger,
 		StateChan:          make(chan state.TailerState, 1024),
+		UpstreamDataChan:   make(chan pipeline.Data, 1024),
 		BackpressureEngine: tailerOptions.BackpressureEngine,
 	}, nil
 }
@@ -84,60 +93,101 @@ func NewTailer(tailerOptions TailerOptions) (*Tailer, error) {
 func (t *Tailer) Run(parserChan chan pipeline.Data) {
 	t.SetState(state.Running)
 
-	for {
-		select {
+	// For non-file tailer, there's no initialized tailer.Tailer
+	if t.Tailer == nil {
+		for {
+			select {
 
-		// Close down all activities once receiving termination signals
-		case <-t.ctx.Done():
-			t.SetState(state.Closed)
-			err := t.Cleanup()
-			if err != nil {
-				t.logger.Error().Err(err).Msg("")
-			}
-			// Buffer channels will stil be open to receive failed-to-forward log
-			return
-
-		case line := <-t.Tailer.Lines:
-			// Discard unrecognized tailed message
-			if line == nil || line.Text == "" {
-				continue
-			}
-
-			lineSize := len(line.Text)
-
-			// Send log size to backpressure engine to check for desired state
-			t.BackpressureEngine.UpdateChan <- lineSize
-
-			// Block until getting Running response from backpressure engine
-			for computedTailerState := range t.StateChan {
-				t.SetState(computedTailerState)
-				if computedTailerState == state.Running || computedTailerState == state.Closed {
-					break
+			// Close down all activities once receiving termination signals
+			case <-t.ctx.Done():
+				t.SetState(state.Closed)
+				err := t.Cleanup()
+				if err != nil {
+					t.logger.Error().Err(err).Msg("")
 				}
-			}
+				// Buffer channels will stil be open to receive failed-to-forward log
+				return
 
-			// Skip to next iteration to catch context cancellation
-			if t.GetState() == state.Closed {
+			case line := <-t.UpstreamDataChan:
+				// Block until get backpressure response
+				// If tailer is closed off, skip to next iteration to catch context cancellation
+				if tailerIsClosed := t.waitForBackpressureResponse(len(line.LogLine)); tailerIsClosed {
+					continue
+				}
+
+				// Submit metrics
+				metrics.Meters.IngestedLogCount.Add(t.ctx, 1)
+
+				// Relay tailed log line to next component in the workflow, buffer
+				parserChan <- line
+
+			default:
 				continue
 			}
+		}
+	} else {
+		for {
+			select {
 
-			// Submit metrics
-			metrics.Meters.IngestedLogCount.Add(t.ctx, 1)
+			// Close down all activities once receiving termination signals
+			case <-t.ctx.Done():
+				t.SetState(state.Closed)
+				err := t.Cleanup()
+				if err != nil {
+					t.logger.Error().Err(err).Msg("")
+				}
+				// Buffer channels will stil be open to receive failed-to-forward log
+				return
 
-			// Relay tailed log line to next component in the workflow, buffer
-			parserChan <- pipeline.Data{
-				Timestamp: fmt.Sprint(time.Now().UnixNano()),
-				LogLine:   line.Text,
+			case line := <-t.Tailer.Lines:
+				// Discard unrecognized tailed message
+				if line == nil || line.Text == "" {
+					continue
+				}
+
+				// Block until get backpressure response
+				// If tailer is closed off, skip to next iteration to catch context cancellation
+				if tailerIsClosed := t.waitForBackpressureResponse(len(line.Text)); tailerIsClosed {
+					continue
+				}
+
+				// Submit metrics
+				metrics.Meters.IngestedLogCount.Add(t.ctx, 1)
+
+				// Relay tailed log line to next component in the workflow, buffer
+				parserChan <- pipeline.Data{
+					Timestamp: fmt.Sprint(line.Time.UnixNano()),
+					LogLine:   line.Text,
+				}
+
+			default:
+				continue
 			}
-
-		default:
-			continue
 		}
 	}
 }
 
+func (t *Tailer) waitForBackpressureResponse(lineSize int) bool {
+	// Send log size to backpressure engine to check for desired state
+	t.BackpressureEngine.UpdateChan <- lineSize
+
+	// Block until getting Running response from backpressure engine
+	for computedTailerState := range t.StateChan {
+		t.SetState(computedTailerState)
+		if computedTailerState == state.Running || computedTailerState == state.Closed {
+			break
+		}
+	}
+
+	// Skip to next iteration to catch context cancellation
+	return t.GetState() == state.Closed
+}
+
 func (t *Tailer) Cleanup() error {
-	return t.Tailer.Stop()
+	if t.Tailer != nil {
+		return t.Tailer.Stop()
+	}
+	return nil
 }
 
 func (t *Tailer) GetState() state.TailerState {
@@ -160,14 +210,17 @@ func (t *Tailer) Close() {
 	metrics.Meters.InitializedComponents["tailer"].Add(t.ctx, -1)
 
 	// Set tailer to closed state
+	t.state = state.Closed
 	t.StateChan <- state.Closed
 
 	t.cancelFunc()
 
 	// Register last read position
-	offset, err := t.Tailer.Tell()
-	if err != nil {
-		t.logger.Error().Err(err).Msg("")
+	if t.Tailer != nil {
+		offset, err := t.Tailer.Tell()
+		if err != nil {
+			t.logger.Error().Err(err).Msg("")
+		}
+		t.Offset = offset
 	}
-	t.Offset = offset
 }

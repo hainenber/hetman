@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/hainenber/hetman/internal/backpressure"
@@ -26,11 +27,12 @@ type Orchestrator struct {
 	forwarderWg    sync.WaitGroup
 	backpressureWg sync.WaitGroup
 
-	config    *config.Config
-	workflows map[string]workflow.Workflow
-	logger    zerolog.Logger
-	registrar *registry.Registry
-	doneChan  chan struct{}
+	config           *config.Config
+	workflows        map[string]workflow.Workflow
+	DoneInstantiated bool
+	logger           zerolog.Logger
+	registrar        *registry.Registry
+	doneChan         chan struct{}
 
 	inputs              []*input.Input
 	tailers             []*tailer.Tailer
@@ -86,6 +88,16 @@ func processPathToForwarderMap(inputToForwarderMap InputToForwarderMap) (InputTo
 	result := make(InputToForwarderMap)
 
 	for target, workflowOpts := range inputToForwarderMap {
+		// Skip processing for headless workflow with non-"filepath" identifier
+		if !strings.Contains(target, "/") {
+			result[target] = &WorkflowOptions{
+				input:            workflowOpts.input,
+				parserConfig:     workflowOpts.parserConfig,
+				forwarderConfigs: workflowOpts.forwarderConfigs,
+			}
+			continue
+		}
+
 		translatedPaths, err := filepath.Glob(target)
 		if err != nil {
 			return nil, err
@@ -118,9 +130,19 @@ func processPathToForwarderMap(inputToForwarderMap InputToForwarderMap) (InputTo
 func (o *Orchestrator) Run() struct{} {
 	processedPathToForwarderMap := make(InputToForwarderMap)
 
-	// Initialize input from filepath
 	o.logger.Info().Msg("Initializing inputs...")
 	for path, wf := range o.workflows {
+		// If target's paths do not exist, initialized headless workflow
+		// which is strictly for aggregator mode
+		if !strings.Contains(path, "/") {
+			processedPathToForwarderMap[path] = &WorkflowOptions{
+				parserConfig:     wf.Parser,
+				forwarderConfigs: wf.Forwarders,
+			}
+			continue
+		}
+
+		// Initialize input from filepath
 		i, err := input.NewInput(input.InputOptions{
 			Logger: o.logger,
 			Path:   path,
@@ -175,6 +197,9 @@ func (o *Orchestrator) Run() struct{} {
 
 	// Execute tailer->buffer->forwarder workflow for each mapping
 	o.runWorkflow(processedPathToForwarderMap)
+
+	// Signify orchestrator has completed instantiation of all required components
+	o.DoneInstantiated = true
 
 	// Block until signal(s) to close resources is received
 	<-o.doneChan
@@ -243,8 +268,10 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 		// Register tailer into associated input
 		// This is to get old, renamed file's last read position
 		// to continue tailing from correct offset for newly renamed file
-		workflowOpts.input.RegisterTailer(t)
-		o.logger.Info().Msgf("Tailer for path %v has been registered into input", translatedPath)
+		if workflowOpts.input != nil {
+			workflowOpts.input.RegisterTailer(t)
+			o.logger.Info().Msgf("Tailer for path %v has been registered into input", translatedPath)
+		}
 
 		// Each workflow will have a single parser
 		ps := parser.NewParser(parser.ParserOptions{
@@ -291,14 +318,18 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 			}()
 		}
 
-		// Start tailing files
+		// Start tailing files (for "file"-type target)
 		o.tailers = append(o.tailers, t)
 		o.tailerWg.Add(1)
 		go func() {
 			defer o.tailerWg.Done()
 			t.Run(ps.ParserChan)
 		}()
-		o.logger.Info().Msgf("Tailer for path \"%v\" is now running", t.Tailer.Filename)
+		if t.Tailer != nil {
+			o.logger.Info().Msgf("Tailer for path \"%v\" is now running", t.Tailer.Filename)
+		} else {
+			o.logger.Info().Msg("Tailer for upstream service and is now running")
+		}
 
 		// Start parsing scrapped logs
 		o.parsers = append(o.parsers, ps)
@@ -357,7 +388,9 @@ func (o *Orchestrator) Cleanup() {
 	// Prevent sending duplicate logs and allow resuming forward new log lines
 	lastReadPositions := make(map[string]int64, len(o.tailers))
 	for _, t := range o.tailers {
-		lastReadPositions[t.Tailer.Filename] = t.Offset
+		if t.Tailer != nil {
+			lastReadPositions[t.Tailer.Filename] = t.Offset
+		}
 	}
 	err := registry.SaveLastPosition(o.registrar.GetRegistryDirPath(), lastReadPositions)
 	if err != nil {
@@ -382,4 +415,10 @@ func (o *Orchestrator) Cleanup() {
 		}
 	}
 	o.logger.Info().Msg("Finish persisting buffered logs to disk")
+}
+
+func (o *Orchestrator) GetUpstreamDataChans() []chan pipeline.Data {
+	return lo.Map(o.tailers, func(item *tailer.Tailer, _ int) chan pipeline.Data {
+		return item.UpstreamDataChan
+	})
 }

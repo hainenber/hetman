@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/hainenber/hetman/internal/config"
 	"github.com/hainenber/hetman/internal/forwarder"
 	"github.com/hainenber/hetman/internal/registry"
@@ -45,10 +46,19 @@ func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string
 			},
 			Targets: []workflow.TargetConfig{
 				{
-					Id: "test",
+					Id: "agent",
 					Paths: []string{
 						tmpLogFile.Name(),
 					},
+					Forwarders: []workflow.ForwarderConfig{
+						{
+							URL:     opt.serverURL,
+							AddTags: map[string]string{"a": "b", "c": "d"},
+						},
+					},
+				},
+				{
+					Id: "aggregator",
 					Forwarders: []workflow.ForwarderConfig{
 						{
 							URL:     opt.serverURL,
@@ -89,7 +99,14 @@ func TestProcessPathToForwarderMap(t *testing.T) {
 	testFwdConfig1 := workflow.ForwarderConfig{URL: "abc.com"}
 	testFwdConfig2 := workflow.ForwarderConfig{URL: "def.com"}
 
+	headlessFwdId := uuid.New().String()
+
 	arg := InputToForwarderMap{
+		headlessFwdId: &WorkflowOptions{
+			forwarderConfigs: []workflow.ForwarderConfig{
+				testFwdConfig1,
+			},
+		},
 		globTmpNginxDir: &WorkflowOptions{
 			forwarderConfigs: []workflow.ForwarderConfig{
 				testFwdConfig1,
@@ -109,6 +126,11 @@ func TestProcessPathToForwarderMap(t *testing.T) {
 	}
 
 	expected := InputToForwarderMap{
+		headlessFwdId: &WorkflowOptions{
+			forwarderConfigs: []workflow.ForwarderConfig{
+				testFwdConfig1,
+			},
+		},
 		tmpNginxFile.Name(): &WorkflowOptions{
 			forwarderConfigs: []workflow.ForwarderConfig{
 				testFwdConfig1,
@@ -125,7 +147,7 @@ func TestProcessPathToForwarderMap(t *testing.T) {
 	processedInputToForwarderMap, err := processPathToForwarderMap(arg)
 	assert.NotNil(t, processedInputToForwarderMap)
 	assert.Nil(t, err)
-	for _, logFilename := range []string{tmpNginxFile.Name(), tmpSyslogFile.Name()} {
+	for _, logFilename := range []string{tmpNginxFile.Name(), tmpSyslogFile.Name(), headlessFwdId} {
 		assert.Equal(t, expected[logFilename], processedInputToForwarderMap[logFilename])
 	}
 }
@@ -166,12 +188,9 @@ func TestOrchestratorBackpressure(t *testing.T) {
 		// Block until first failed log delivery
 		<-logDeliveredChan
 
-		// Expect tailer to be eventually paused
-		assert.Equal(t, state.Paused, orch.tailers[0].GetState())
-
-		// Unblock tailer by decrementing backpressure's internal counter to -1
-		// Emulate downstream service online after duration of outage
-		// orch.tailers[0].BackpressureEngine.UpdateChan <- -2
+		// Expect path-container tailer to be eventually paused
+		assert.Equal(t, state.Running, orch.tailers[0].GetState())
+		assert.Equal(t, state.Paused, orch.tailers[1].GetState())
 
 		doneChan <- struct{}{}
 
@@ -295,6 +314,7 @@ func TestOrchestratorBackpressure(t *testing.T) {
 }
 
 func TestOrchestratorRun(t *testing.T) {
+	t.Parallel()
 	t.Run("successfully run and cleanup, happy path", func(t *testing.T) {
 		var (
 			doneChan        = make(chan struct{})
@@ -307,6 +327,7 @@ func TestOrchestratorRun(t *testing.T) {
 		mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			reqCount++
 			if reqCount == 1 {
+				assert.True(t, orch.DoneInstantiated)
 				doneChan <- struct{}{}
 			}
 		}))
@@ -353,6 +374,7 @@ func TestOrchestratorRun(t *testing.T) {
 		mockFailedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			reqCount++
 			if reqCount == 1 {
+				assert.True(t, orch.DoneInstantiated)
 				doneChan <- struct{}{}
 			}
 			w.WriteHeader(http.StatusInternalServerError)
