@@ -5,6 +5,7 @@ global:
 
 targets:
   - id: nginx
+    type: file
     paths:
       - testdata/nginx/nginx.log 
       - testdata/nginx/*.log 
@@ -19,6 +20,7 @@ targets:
         compress_request: true 
         probe_readiness: false
   - id: misc
+    type: file
     paths:
       - testdata/syslog/*.log
       - testdata/nginx/*.log
