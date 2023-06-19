@@ -39,7 +39,10 @@ func receiveLogPayload(inputChans []chan pipeline.Data) func(w http.ResponseWrit
 		// Detect compressed body via "Content-Encoding" header
 		// Unmarshal payload into proper struct
 		// TODO: Converge to OpenTelemetry's log schema
-		var payload forwarder.Payload
+		var (
+			payload forwarder.Payload
+			decoder *json.Decoder
+		)
 		switch r.Header.Get("Content-Encoding") {
 		case "gzip":
 			gr, err := gzip.NewReader(r.Body)
@@ -50,15 +53,15 @@ func receiveLogPayload(inputChans []chan pipeline.Data) func(w http.ResponseWrit
 			defer gr.Close()
 
 			// Read the decompressed data.
-			if err := json.NewDecoder(gr).Decode(&payload); err != nil {
-				http.Error(w, "error handling compressed payload", http.StatusInternalServerError)
-				return
-			}
+			decoder = json.NewDecoder(gr)
 		default:
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-				http.Error(w, "invalid JSON format for submitted logs", http.StatusBadRequest)
-				return
-			}
+			decoder = json.NewDecoder(r.Body)
+		}
+
+		// Decode payload into struct
+		if err := decoder.Decode(&payload); err != nil {
+			http.Error(w, "error handling compressed payload", http.StatusInternalServerError)
+			return
 		}
 		defer r.Body.Close()
 
