@@ -76,6 +76,7 @@ services:
             version: 1
             editable: false
           - name: Victoria Metrics
+            uid: PD8609A2215C963D8
             type: prometheus
             access: proxy 
             orgId: 1
