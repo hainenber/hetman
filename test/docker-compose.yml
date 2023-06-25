@@ -1,12 +1,11 @@
 version: "3.1"
 
 services:
-  victoria_metrics:
+  victoria-metrics:
     image: victoriametrics/victoria-metrics
     ports:
       - 8428:8428
-
-  grafana_agent:
+  grafana-agent:
     image: grafana/agent:latest
     volumes:
       - ./agent-config.river:/etc/agent/config.river
@@ -18,13 +17,13 @@ services:
     environment:
       HOSTNAME: agent
       AGENT_MODE: flow
-      REMOTE_WRITE_HOST: http://victoria_metrics:8428/api/v1/write
+      REMOTE_WRITE_HOST: http://victoria-metrics:8428/api/v1/write
     ports:
       - "12345:12345"
       - "4318:4318"
     depends_on:
       - loki
-      - victoria_metrics
+      - victoria-metrics
 
   loki:
     image: grafana/loki:latest
@@ -60,7 +59,7 @@ services:
             type: prometheus
             access: proxy 
             orgId: 1
-            url: http://victoria_metrics:8428
+            url: http://victoria-metrics:8428
             basicAuth: false
             isDefault: false
             version: 1
