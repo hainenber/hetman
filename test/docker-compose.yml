@@ -1,10 +1,30 @@
-version: "3.1"
+version: "3.9"
 
 services:
   victoria-metrics:
     image: victoriametrics/victoria-metrics
     ports:
       - 8428:8428
+  
+  hetman-agent:
+    build: 
+      context: ..
+      dockerfile: Dockerfile
+    image: hetman
+    restart: on-failure:3
+    environment:
+      OTEL_SERVICE_NAME: "hetman"
+      OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://grafana-agent:4318"
+    entrypoint: 
+      - sh
+      - -euc
+      - | 
+        mkdir -p /tmp/tmp_nginx/
+        echo '{"a":"1","b":"2"}' > /tmp/tmp_nginx/nginx.log
+        echo '{"c":"3","d":"4"}' > /tmp/tmp_nginx/nginx2.log
+        /usr/local/bin/hetman --mode=agent --config-file=/etc/hetman/hetman.agent.yaml
+
   grafana-agent:
     image: grafana/agent:latest
     volumes:
