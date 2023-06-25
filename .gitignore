@@ -6,3 +6,8 @@ hetman*yaml
 
 # Build binary 
 bin
+
+# Terraform's downloaded providers and lockfiles
+.terraform/
+.terraform.lock.hcl
+terraform*
