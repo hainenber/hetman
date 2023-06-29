@@ -2,7 +2,8 @@
 testdata
 
 # Genuine configs
-hetman*yaml
+hetman.agent.yaml
+hetman.aggregator.yaml
 
 # Build binary 
 bin
