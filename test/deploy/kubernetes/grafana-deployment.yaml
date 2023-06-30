@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    kompose.cmd: kompose convert -f ../docker-compose.yml
+    kompose.version: 1.28.0 (HEAD)
+  creationTimestamp: null
+  labels:
+    io.kompose.service: grafana
+  name: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      io.kompose.service: grafana
+  strategy: {}
+  template:
+    metadata:
+      annotations:
+        kompose.cmd: kompose convert -f ../docker-compose.yml
+        kompose.version: 1.28.0 (HEAD)
+      creationTimestamp: null
+      labels:
+        io.kompose.service: grafana
+    spec:
+      containers:
+        - command:
+            - sh
+            - -euc
+            - "mkdir -p /etc/grafana/provisioning/datasources\ncat <<EOF > /etc/grafana/provisioning/datasources/ds.yaml\napiVersion: 1\ndatasources:\n  - name: Loki\n    type: loki\n    access: proxy \n    orgId: 1\n    url: http://loki:3100\n    basicAuth: false\n    isDefault: true\n    version: 1\n    editable: false\n  - name: Victoria Metrics\n    uid: PD8609A2215C963D8\n    type: prometheus\n    access: proxy \n    orgId: 1\n    url: http://victoria-metrics:8428\n    basicAuth: false\n    isDefault: false\n    version: 1\n    editable: false\nEOF\n/run.sh\n"
+          env:
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: Admin
+            - name: GF_PATHS_PROVISIONING
+              value: /etc/grafana/provisioning
+          image: grafana/grafana:latest
+          name: grafana
+          ports:
+            - containerPort: 3000
+          resources: {}
+      restartPolicy: Always
+status: {}
