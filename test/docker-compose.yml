@@ -23,7 +23,7 @@ services:
         mkdir -p /tmp/tmp_nginx/
         echo '{"a":"1","b":"2"}' > /tmp/tmp_nginx/nginx.log
         echo '{"c":"3","d":"4"}' > /tmp/tmp_nginx/nginx2.log
-        /usr/local/bin/hetman --mode=agent --config-file=/etc/hetman/hetman.agent.yaml
+        /usr/local/bin/hetman --mode=agent --config-file=/etc/hetman/hetman.agent.yaml --log-level=debug
 
   grafana-agent:
     image: grafana/agent:latest
