@@ -10,14 +10,8 @@ lint:
 	go fmt ./...
 	go test -cover ./...
 
-build:
-	docker-compose -f test/docker-compose.yml up -d
-	[[ -d ./bin ]] || mkdir ./bin
-	[[ -d ./tmp/tmp_nginx ]] || mkdir -p /tmp/tmp_nginx/
-	echo '{"a":"1","b":"2"}' > /tmp/tmp_nginx/nginx.log
-	echo '{"c":"3","d":"4"}' > /tmp/tmp_nginx/nginx2.log
-	[[ -f /tmp/hetman.registry.json ]] && truncate -s 0 /tmp/hetman.registry.json || continue
-	CGO_ENABLED=0 go build -o bin ./cmd/hetman
+run:
+	docker-compose -f test/docker-compose.yml up --remove-orphans --build -d 
 
 run-agent: build
 	./bin/hetman --mode=agent --config-file=hetman.agent.yaml
