@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  creationTimestamp: null
+  labels:
+    io.kompose.service: grafana-agent-claim0
+  name: grafana-agent-config-map
+data:
+  config.river: |-
+    logging {
+      level  = "debug"
+      format = "logfmt"
+    }
+
+    otelcol.receiver.otlp "default" {
+      // https://grafana.com/docs/agent/latest/flow/reference/components/otelcol.receiver.otlp/
+
+        // configures the default grpc endpoint "0.0.0.0:4317"
+      grpc { }
+        // configures the default http/protobuf endpoint "0.0.0.0:4318"
+      http { }
+
+      output {
+        metrics = [otelcol.processor.batch.default.input]
+      }
+    }
+
+    otelcol.processor.batch "default" {
+      // https://grafana.com/docs/agent/latest/flow/reference/components/otelcol.processor.batch/
+      output {
+        metrics = [otelcol.exporter.prometheus.grafana_cloud_prometheus.input]
+      }
+    }
+
+    otelcol.exporter.prometheus "grafana_cloud_prometheus" {
+      // https://grafana.com/docs/agent/latest/flow/reference/components/otelcol.exporter.prometheus/
+      forward_to = [prometheus.remote_write.grafana_cloud_prometheus.receiver]
+    }
+
+    prometheus.remote_write "grafana_cloud_prometheus" {
+      // https://grafana.com/docs/agent/latest/flow/reference/components/prometheus.remote_write/
+      endpoint {
+        url = env("REMOTE_WRITE_HOST")
+      }
+    }

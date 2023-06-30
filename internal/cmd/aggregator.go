@@ -20,6 +20,7 @@ import (
 type Aggregator struct {
 	ConfigFile string
 	Port       int
+	LogLevel   string
 }
 
 // receiveLogPayload accepts log payload from upstreams and relay to next stage of agent's processing pipeline
@@ -83,7 +84,10 @@ func receiveLogPayload(inputChans []chan pipeline.Data) func(w http.ResponseWrit
 
 func (a *Aggregator) Run() {
 	var (
-		agent              = Agent{ConfigFile: a.ConfigFile}
+		agent = Agent{
+			ConfigFile: a.ConfigFile,
+			LogLevel:   a.LogLevel,
+		}
 		srv                = &http.Server{Addr: fmt.Sprintf(":%v", a.Port)}
 		doneHttpServerChan = make(chan os.Signal, 1)
 		wg                 sync.WaitGroup

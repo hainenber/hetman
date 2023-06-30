@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  annotations:
+    kompose.cmd: kompose convert -f ../docker-compose.yml
+    kompose.version: 1.28.0 (HEAD)
+  creationTimestamp: null
+  labels:
+    io.kompose.service: hetman-agent
+  name: hetman-agent
+spec:
+  selector:
+    matchLabels:
+      name: hetman-agent
+  template:
+    metadata:
+      labels:
+        name: hetman-agent
+    spec:
+      containers:
+        - command:
+            - /usr/local/bin/hetman 
+            - --mode=agent
+            - --config-file=/etc/hetman/hetman.agent.yaml
+            - --log-level=debug
+          env:
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://grafana-agent:4318
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: http/protobuf
+            - name: OTEL_SERVICE_NAME
+              value: hetman
+          # Local image
+          image: hetman
+          # Don't pull image from public registry, use locally built image instead
+          imagePullPolicy: Never
+          name: hetman-agent
+          resources: {}
+          volumeMounts:
+            - name: tmplog
+              mountPath: /tmp/hetman
+            - name: config
+              mountPath: /etc/hetman/hetman.agent.yaml
+              readOnly: true
+              subPath: hetman.agent.yaml
+      volumes:
+        - name: tmplog
+          hostPath:
+            path: /tmp/hetman
+            type: DirectoryOrCreate
+        - name: config
+          configMap:
+            defaultMode: 0640
+            name: hetman-agent-config-map
+        - name: testlog
+          configMap:
+            name: hetman-agent-testlog
+      restartPolicy: Always
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hetman-agent-config-map
+data:
+  hetman.agent.yaml: |-
+    global:
+      registry_directory: /tmp
+      disk_buffer_persistence: true
+      backpressure_memory_limit: 1000
+
+    targets:
+      - id: testlog
+        type: file
+        paths:
+          - /tmp/hetman/*.log
+        parser: 
+          format: json
+        forwarders:
+          - url: http://loki:3100/loki/api/v1/push
+            add_tags:
+              label: hetman
+              dest: loki
+            compress_request: true 
+            probe_readiness: false
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hetman-agent-testlog
+data:
+  abc.log: |-
+    {"a":"1","b":"2"}
+    {"c":"3","d":"4"}

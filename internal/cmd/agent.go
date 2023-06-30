@@ -17,6 +17,7 @@ import (
 type Agent struct {
 	Orchestrator *orchestrator.Orchestrator
 	ConfigFile   string
+	LogLevel     string
 }
 
 func (a *Agent) IsReady() bool {
@@ -30,11 +31,27 @@ func (a *Agent) Run() {
 	var (
 		wg                 sync.WaitGroup
 		logger             = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+		logLevel           zerolog.Level
 		terminationSigs    = make(chan os.Signal, 1)
 		doneChan           = make(chan struct{}, 1)
 		doneCleanupChan    = make(chan struct{}, 1)
 		reloadedConfigChan = make(chan *config.Config, 1) // Only allow 1 reload attempt at the same time
 	)
+
+	// Set global log level
+	switch a.LogLevel {
+	case "error":
+		logLevel = zerolog.ErrorLevel
+	case "warning":
+		logLevel = zerolog.WarnLevel
+	case "info":
+		logLevel = zerolog.InfoLevel
+	case "debug":
+		logLevel = zerolog.DebugLevel
+	default:
+		logLevel = zerolog.InfoLevel
+	}
+	zerolog.SetGlobalLevel(logLevel)
 
 	// Add a hook into main logger for registering internal error as metrics
 	logger = logger.Hook(metrics.InternalErrorLoggerHook{})

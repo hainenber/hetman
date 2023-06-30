@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    kompose.cmd: kompose convert -f ../docker-compose.yml
+    kompose.version: 1.28.0 (HEAD)
+  creationTimestamp: null
+  labels:
+    io.kompose.service: grafana-agent
+  name: grafana-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      io.kompose.service: grafana-agent
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        kompose.cmd: kompose convert -f ../docker-compose.yml
+        kompose.version: 1.28.0 (HEAD)
+      creationTimestamp: null
+      labels:
+        io.kompose.service: grafana-agent
+    spec:
+      containers:
+        - command:
+            - /bin/grafana-agent
+            - run
+            - --server.http.listen-addr=0.0.0.0:12345
+            - /etc/agent/config.river
+          env:
+            - name: AGENT_MODE
+              value: flow
+            - name: HOSTNAME
+              value: agent
+            - name: REMOTE_WRITE_HOST
+              value: http://victoria-metrics:8428/api/v1/write
+          image: grafana/agent:latest
+          name: grafana-agent
+          ports:
+            - containerPort: 12345
+            - containerPort: 4318
+          resources: {}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/agent/config.river
+              subPath: config.river
+              readOnly: true
+      restartPolicy: Always
+      volumes:
+        - name: config
+          configMap:
+            defaultMode: 0640
+            name: grafana-agent-config-map
