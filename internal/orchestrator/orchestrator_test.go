@@ -406,19 +406,30 @@ func TestOrchestratorRun(t *testing.T) {
 		// Expect agent's registry is saved
 		registryPath := filepath.Join(tmpRegistryDir, "hetman.registry.json")
 		assert.FileExists(t, registryPath)
-
 		registryFile, _ := os.ReadFile(registryPath)
 		assert.Nil(t, json.Unmarshal(registryFile, &registryContent))
 
+		// Map forwarder's signature with its "source" tag
+		forwarderSourceAndSignatureMapping := make(map[string]string, 2)
+		for _, fwd := range orch.forwarders {
+			forwarderSourceAndSignatureMapping[fwd.GetSignature()] = fwd.GetLogSource()
+		}
+
 		// Since downstream is offline, expect registry file to contain last read position
 		// and the buffered file containing all scraped logs
+		// Only applicable for agent-mode orchestrator, it should be empty for aggregator-mode one
 		assert.Equal(t, int64(4), registryContent.Offsets[tmpLogFile.Name()])
 		for _, buf := range orch.buffers {
-			logBufferedFile, err := os.ReadFile(registryContent.BufferedPaths[buf.GetSignature()])
+			bufferSignature := buf.GetSignature()
+			logBufferedFilepath := registryContent.BufferedPaths[bufferSignature]
+			logBufferedFile, err := os.ReadFile(logBufferedFilepath)
 			assert.Nil(t, err)
-			// TODO: Fix this Yoda issue
-			//lint:ignore ST1017 temporary Yoda conditionals
-			assert.True(t, "a\nb\n" == string(logBufferedFile) || "" == string(logBufferedFile))
+			switch forwarderSourceAndSignatureMapping[bufferSignature] {
+			case "aggregator":
+				assert.Equal(t, "", string(logBufferedFile))
+			default:
+				assert.Equal(t, "a\nb\n", string(logBufferedFile))
+			}
 		}
 	})
 }

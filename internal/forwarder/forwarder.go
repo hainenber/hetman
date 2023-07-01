@@ -241,3 +241,7 @@ func (f *Forwarder) forward(forwardArgs ...pipeline.Data) error {
 func (f *Forwarder) GetSignature() string {
 	return f.settings.Signature
 }
+
+func (f *Forwarder) GetLogSource() string {
+	return f.settings.Source
+}

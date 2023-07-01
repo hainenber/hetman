@@ -66,6 +66,13 @@ func TestNewForwarder(t *testing.T) {
 	})
 }
 
+func TestGetLogSource(t *testing.T) {
+	fwd := prepareTestForwarder(TestForwarderOptions{
+		source: "/tmp/nginx/nginx1.log",
+	})
+	assert.Equal(t, "/tmp/nginx/nginx1.log", fwd.GetLogSource())
+}
+
 func TestGetSignature(t *testing.T) {
 	fwd := prepareTestForwarder(TestForwarderOptions{})
 	assert.NotNil(t, fwd)
