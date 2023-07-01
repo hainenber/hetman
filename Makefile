@@ -13,6 +13,9 @@ lint:
 run:
 	docker-compose -f test/docker-compose.yml up --remove-orphans --build -d 
 
+stop:
+	docker-compose -f test/docker-compose.yml down -v
+
 dashboard:
 	cd deployment/grafana && \
 		terraform init && \
