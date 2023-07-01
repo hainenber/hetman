@@ -13,6 +13,11 @@ lint:
 run:
 	docker-compose -f test/docker-compose.yml up --remove-orphans --build -d 
 
+dashboard:
+	cd deployment/grafana && \
+		terraform init && \
+		terraform apply -auto-approve
+
 run-agent: build
 	./bin/hetman --mode=agent --config-file=hetman.agent.yaml
 
