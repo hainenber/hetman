@@ -127,10 +127,10 @@ func (f *Forwarder) Run(bufferChan chan pipeline.Data, backpressureChan chan int
 					return agg + len(item.LogLine)
 				}, 0)
 				backpressureChan <- -batchedLogSize
-
-				// Submit metrics on successful forwarded logs
-				metrics.Meters.ForwardedLogCount.Add(f.ctx, int64(batchedLogSize))
 			}
+
+			// Submit metrics on successful forwarded logs
+			metrics.Meters.ForwardedLogCount.Add(f.ctx, int64(len(batch)))
 
 			// Restore batch array to zero length
 			batch = []pipeline.Data{}
