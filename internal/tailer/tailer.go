@@ -215,13 +215,27 @@ func (t *Tailer) Close() {
 	t.StateChan <- state.Closed
 
 	t.cancelFunc()
+}
 
-	// Register last read position
-	if t.Tailer != nil {
-		offset, err := t.Tailer.Tell()
-		if err != nil {
-			t.logger.Error().Err(err).Msg("")
-		}
+func (t *Tailer) GetLastReadPosition() (int64, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	var (
+		offset int64
+		err    error
+	)
+
+	// Only get last read position when tailer isn't closed
+	if t.Tailer != nil && t.state != state.Closed {
+		offset, err = t.Tailer.Tell()
 		t.Offset = offset
 	}
+
+	// Immediately return registered last read position when tailer is closed
+	if t.state == state.Closed {
+		return t.Offset, nil
+	}
+
+	return offset, err
 }
