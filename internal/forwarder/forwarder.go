@@ -38,7 +38,7 @@ type Forwarder struct {
 	httpClient *http.Client       // Forwarder's reusable HTTP client
 	LogChan    chan pipeline.Data // Channel to receive logs from buffer stage
 	logger     zerolog.Logger     // Dedicated logger
-	settings   *ForwarderSettings // Forwarder's settings
+	settings   ForwarderSettings  // Forwarder's settings
 }
 
 type ForwarderSettings struct {
@@ -50,6 +50,10 @@ type ForwarderSettings struct {
 }
 
 func NewForwarder(settings ForwarderSettings) *Forwarder {
+	// Deep copy forwarder settings to avoid contamination of "source" attribute
+	clonedForwarderSettings := settings
+	clonedForwarderSettings.AddTags = lo.Assign(settings.AddTags)
+
 	ctx, cancelFunc := context.WithCancel(context.Background())
 
 	// For each failed delivery, maximum elapsed time for exp backoff is 5 seconds
@@ -58,8 +62,8 @@ func NewForwarder(settings ForwarderSettings) *Forwarder {
 
 	// Add "source" label with tailed filename as value
 	// Help distinguish log streams in single forwarded destination
-	if settings.AddTags != nil && settings.Source != "" {
-		settings.AddTags["source"] = settings.Source
+	if clonedForwarderSettings.AddTags != nil && clonedForwarderSettings.Source != "" {
+		clonedForwarderSettings.AddTags["source"] = clonedForwarderSettings.Source
 	}
 
 	// Submit metrics on newly initialized forwarder
@@ -72,7 +76,7 @@ func NewForwarder(settings ForwarderSettings) *Forwarder {
 		httpClient: &http.Client{},
 		LogChan:    make(chan pipeline.Data, 1024),
 		logger:     zerolog.New(os.Stdout),
-		settings:   &settings,
+		settings:   clonedForwarderSettings,
 	}
 }
 

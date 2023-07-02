@@ -283,6 +283,9 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 		// Create a buffer associative with each forwarder
 		var buffers []*buffer.Buffer
 		for _, fwdConf := range workflowOpts.forwarderConfigs {
+			// Copy forwarder config to new variable to avoid race condition
+			// This should be fixed in Go 1.21
+			fwdConf := fwdConf
 			fwd := forwarder.NewForwarder(forwarder.ForwarderSettings{
 				URL:             fwdConf.URL,
 				AddTags:         fwdConf.AddTags,
