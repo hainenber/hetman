@@ -1,9 +1,11 @@
 package orchestrator
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/hainenber/hetman/internal/backpressure"
 	"github.com/hainenber/hetman/internal/buffer"
@@ -26,6 +28,7 @@ type Orchestrator struct {
 	bufferWg       sync.WaitGroup
 	forwarderWg    sync.WaitGroup
 	backpressureWg sync.WaitGroup
+	orchWg         sync.WaitGroup
 
 	config           *config.Config
 	workflows        map[string]workflow.Workflow
@@ -40,6 +43,9 @@ type Orchestrator struct {
 	parsers             []*parser.Parser
 	backpressureEngines []*backpressure.Backpressure
 	forwarders          []*forwarder.Forwarder
+
+	ctx        context.Context
+	cancelFunc context.CancelFunc
 }
 
 type OrchestratorOption struct {
@@ -65,12 +71,17 @@ func NewOrchestrator(options OrchestratorOption) *Orchestrator {
 	}
 	options.Logger.Info().Msgf("Finish loading registry file at %v ", registrar.GetRegistryPath())
 
+	// Create context for this orchestrator
+	ctx, cancelFunc := context.WithCancel(context.Background())
+
 	return &Orchestrator{
-		doneChan:  options.DoneChan,
-		config:    options.Config,
-		logger:    options.Logger,
-		registrar: registrar,
-		workflows: workflows,
+		doneChan:   options.DoneChan,
+		config:     options.Config,
+		logger:     options.Logger,
+		registrar:  registrar,
+		workflows:  workflows,
+		ctx:        ctx,
+		cancelFunc: cancelFunc,
 	}
 }
 
@@ -128,7 +139,10 @@ func processPathToForwarderMap(inputToForwarderMap InputToForwarderMap) (InputTo
 // Kickstart operations for forwarders and tailers
 // If logs were disk-persisted before, read them up for re-delivery
 func (o *Orchestrator) Run() struct{} {
-	processedPathToForwarderMap := make(InputToForwarderMap)
+	var (
+		tailedFileStateTicker       = time.NewTicker(1 * time.Second)
+		processedPathToForwarderMap = make(InputToForwarderMap)
+	)
 
 	o.logger.Info().Msg("Initializing inputs...")
 	for path, wf := range o.workflows {
@@ -188,6 +202,20 @@ func (o *Orchestrator) Run() struct{} {
 			}
 		}(wf.Forwarders)
 	}
+
+	// Periodically persist last read positions of tailed files into disk
+	o.orchWg.Add(1)
+	go func() {
+		defer o.orchWg.Done()
+		for {
+			select {
+			case <-o.ctx.Done():
+				return
+			case <-tailedFileStateTicker.C:
+				o.PersistLastReadPositionForTailers()
+			}
+		}
+	}()
 
 	// Group forwarder configs by input's path
 	processedPathToForwarderMap, err := processPathToForwarderMap(processedPathToForwarderMap)
@@ -345,6 +373,10 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 }
 
 func (o *Orchestrator) Close() {
+	// Stop orchestrator's periodic state persistence to disk
+	o.cancelFunc()
+	o.orchWg.Wait()
+
 	// Close following components in order: input -> tailer -> buffer -> forwarder
 	// Ensure all consumed log entries are flushed before closing
 	for _, i := range o.inputs {
@@ -384,19 +416,27 @@ func (o *Orchestrator) Close() {
 	}
 	o.logger.Info().Msg("Sent close signal to created backpressure engines")
 	o.backpressureWg.Wait()
+
+}
+
+func (o *Orchestrator) PersistLastReadPositionForTailers() error {
+	lastReadPositions := make(map[string]int64, len(o.tailers))
+	for _, t := range o.tailers {
+		if t.Tailer != nil {
+			offset, err := t.GetLastReadPosition()
+			if err != nil {
+				o.logger.Error().Err(err).Msgf("Failed getting last read position for tailer \"%s\"", t.Tailer.Filename)
+			}
+			lastReadPositions[t.Tailer.Filename] = offset
+		}
+	}
+	return registry.SaveLastPosition(o.registrar.GetRegistryDirPath(), lastReadPositions)
 }
 
 func (o *Orchestrator) Cleanup() {
 	// Save last read position by tailers to local registry
 	// Prevent sending duplicate logs and allow resuming forward new log lines
-	lastReadPositions := make(map[string]int64, len(o.tailers))
-	for _, t := range o.tailers {
-		if t.Tailer != nil {
-			lastReadPositions[t.Tailer.Filename] = t.Offset
-		}
-	}
-	err := registry.SaveLastPosition(o.registrar.GetRegistryDirPath(), lastReadPositions)
-	if err != nil {
+	if err := o.PersistLastReadPositionForTailers(); err != nil {
 		o.logger.Error().Err(err).Msg("")
 	}
 	o.logger.Info().Msg("Finish saving last read positions")
@@ -412,8 +452,7 @@ func (o *Orchestrator) Cleanup() {
 			}
 			diskBufferedFilepaths[b.GetSignature()] = diskBufferedFilepath
 		}
-		err = registry.SaveDiskBufferedFilePaths(o.registrar.GetRegistryDirPath(), diskBufferedFilepaths)
-		if err != nil {
+		if err := registry.SaveDiskBufferedFilePaths(o.registrar.GetRegistryDirPath(), diskBufferedFilepaths); err != nil {
 			o.logger.Error().Err(err).Msg("")
 		}
 	}

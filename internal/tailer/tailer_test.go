@@ -69,7 +69,7 @@ func TestTailerClose(t *testing.T) {
 		<-tl.Tailer.Lines
 
 		assert.NotPanics(t, tl.Close)
-		assert.Equal(t, int64(4), tl.Offset)
+		assert.Equal(t, int64(0), tl.Offset)
 		assert.Equal(t, state.Closed, tl.GetState())
 	})
 	t.Run("close aggregator-oriented tailer", func(t *testing.T) {
@@ -78,6 +78,20 @@ func TestTailerClose(t *testing.T) {
 		assert.NotPanics(t, tl.Close)
 		assert.Equal(t, int64(0), tl.Offset)
 		assert.Equal(t, state.Closed, tl.GetState())
+	})
+}
+
+func TestGetLastReadPosition(t *testing.T) {
+	t.Run("get tailer last read position when tailer is running", func(t *testing.T) {
+		tl, tmpFile, _ := createTestTailer(TailerOptions{Offset: 0}, false)
+		defer os.Remove(tmpFile.Name())
+
+		<-tl.Tailer.Lines
+
+		offset, err := tl.GetLastReadPosition()
+		assert.Nil(t, err)
+		assert.Equal(t, int64(4), offset)
+		assert.Equal(t, int64(4), tl.Offset)
 	})
 }
 
