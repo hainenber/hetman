@@ -31,10 +31,13 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string, *os.File) {
+func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string, []*os.File) {
 	tmpRegistryDir, _ := os.MkdirTemp("", "orchestrator-backpressure-dir-")
-	tmpLogFile, _ := os.CreateTemp("", "orchestrator-backpressure-file-")
-	os.WriteFile(tmpLogFile.Name(), []byte("a\nb\n"), 0777)
+	tmpLogDir, _ := os.MkdirTemp("", "")
+	tmpLogFile1, _ := os.CreateTemp(tmpLogDir, "orchestrator-backpressure-file-")
+	tmpLogFile2, _ := os.CreateTemp(tmpLogDir, "orchestrator-backpressure-file-")
+	os.WriteFile(tmpLogFile1.Name(), []byte("a\nb\n"), 0777)
+	os.WriteFile(tmpLogFile2.Name(), []byte("c\nd\n"), 0777)
 
 	orch := NewOrchestrator(OrchestratorOption{
 		DoneChan: opt.doneChan,
@@ -48,7 +51,7 @@ func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string
 				{
 					Id: "agent",
 					Paths: []string{
-						tmpLogFile.Name(),
+						filepath.Join(tmpLogDir, "*"),
 					},
 					Forwarders: []workflow.ForwarderConfig{
 						{
@@ -69,7 +72,7 @@ func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string
 			},
 		},
 	})
-	return orch, tmpRegistryDir, tmpLogFile
+	return orch, tmpRegistryDir, []*os.File{tmpLogFile1, tmpLogFile2}
 }
 
 func TestNewOrchestrator(t *testing.T) {
@@ -169,13 +172,15 @@ func TestOrchestratorBackpressure(t *testing.T) {
 
 		// Create and run a orchestrator with full workflow of tailer, buffer and forwarder
 		// Configure a small backpressure limit
-		orch, tmpRegistryDir, tmpLogFile := generateTestOrchestrator(TestOrchestratorOption{
+		orch, tmpRegistryDir, tmpLogFiles := generateTestOrchestrator(TestOrchestratorOption{
 			doneChan:           doneChan,
 			serverURL:          failedServer.URL,
 			backpressureOption: 1,
 		})
 		defer os.RemoveAll(tmpRegistryDir)
-		defer os.Remove(tmpLogFile.Name())
+		for _, tmpLogFile := range tmpLogFiles {
+			defer os.Remove(tmpLogFile.Name())
+		}
 
 		assert.NotNil(t, orch)
 
@@ -202,7 +207,7 @@ func TestOrchestratorBackpressure(t *testing.T) {
 		wg.Wait()
 
 		assert.Equal(t, state.Closed, orch.tailers[0].GetState())
-		assert.Equal(t, int64(2), orch.backpressureEngines[0].GetInternalCounter())
+		assert.Equal(t, int64(4), orch.backpressureEngines[0].GetInternalCounter())
 	})
 
 	t.Run("do not block tailer when backpressure's memory limit is not breached, with offline downstream", func(t *testing.T) {
@@ -225,13 +230,15 @@ func TestOrchestratorBackpressure(t *testing.T) {
 
 		// Create and run a orchestrator with full workflow of tailer, buffer and forwarder
 		// Configure a moderate backpressure limit
-		orch, tmpRegistryDir, tmpLogFile := generateTestOrchestrator(TestOrchestratorOption{
+		orch, tmpRegistryDir, tmpLogFiles := generateTestOrchestrator(TestOrchestratorOption{
 			doneChan:           doneChan,
 			serverURL:          offlineServer.URL,
 			backpressureOption: 15,
 		})
 		defer os.RemoveAll(tmpRegistryDir)
-		defer os.Remove(tmpLogFile.Name())
+		for _, tmpLogFile := range tmpLogFiles {
+			defer os.Remove(tmpLogFile.Name())
+		}
 
 		assert.NotNil(t, orch)
 
@@ -258,7 +265,7 @@ func TestOrchestratorBackpressure(t *testing.T) {
 		wg.Wait()
 
 		assert.Equal(t, state.Closed, orch.tailers[0].GetState())
-		assert.Equal(t, int64(2), orch.backpressureEngines[0].GetInternalCounter())
+		assert.Equal(t, int64(4), orch.backpressureEngines[0].GetInternalCounter())
 	})
 
 	t.Run("do not block tailer when backpressure's memory limit is not breached, with online upstream", func(t *testing.T) {
@@ -286,13 +293,15 @@ func TestOrchestratorBackpressure(t *testing.T) {
 
 		// Create and run a orchestrator with full workflow of tailer, buffer and forwarder
 		// Configure a moderate backpressure limit
-		orch, tmpRegistryDir, tmpLogFile := generateTestOrchestrator(TestOrchestratorOption{
+		orch, tmpRegistryDir, tmpLogFiles := generateTestOrchestrator(TestOrchestratorOption{
 			doneChan:           doneChan,
 			serverURL:          onlineServer.URL,
 			backpressureOption: 15,
 		})
 		defer os.RemoveAll(tmpRegistryDir)
-		defer os.Remove(tmpLogFile.Name())
+		for _, tmpLogFile := range tmpLogFiles {
+			defer os.Remove(tmpLogFile.Name())
+		}
 
 		assert.NotNil(t, orch)
 
@@ -327,25 +336,43 @@ func TestOrchestratorRun(t *testing.T) {
 			reqCount        int
 			orch            *Orchestrator
 			registryContent registry.Registry
+			sourceLabels    = make(map[string]bool)
 		)
 
-		mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			reqCount++
-			if reqCount == 1 {
-				assert.True(t, orch.DoneInstantiated)
-				doneChan <- struct{}{}
-			}
-		}))
+		mux := http.NewServeMux()
+		mockServer := httptest.NewServer(mux)
 		defer mockServer.Close()
 
-		orch, tmpRegistryDir, tmpLogFile := generateTestOrchestrator(TestOrchestratorOption{
+		orch, tmpRegistryDir, tmpLogFiles := generateTestOrchestrator(TestOrchestratorOption{
 			doneChan:              doneChan,
 			serverURL:             mockServer.URL,
 			backpressureOption:    15,
 			diskBufferPersistence: true,
 		})
 		defer os.RemoveAll(tmpRegistryDir)
-		defer os.Remove(tmpLogFile.Name())
+		for _, tmpLogFile := range tmpLogFiles {
+			defer os.Remove(tmpLogFile.Name())
+		}
+
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			reqCount++
+			payload := forwarder.Payload{}
+			json.NewDecoder(r.Body).Decode(&payload)
+
+			sourceLabels[payload.Streams[0].Stream["source"]] = true
+
+			// Expect orchestrator has done spinning up all workflow components
+			if reqCount == 1 {
+				assert.True(t, orch.DoneInstantiated)
+			}
+			// Expect "source" label to be different
+			if reqCount == 2 {
+				assert.Len(t, sourceLabels, 2)
+				assert.Contains(t, sourceLabels, tmpLogFiles[0].Name())
+				assert.Contains(t, sourceLabels, tmpLogFiles[1].Name())
+				doneChan <- struct{}{}
+			}
+		})
 
 		wg.Add(1)
 		go func() {
@@ -358,12 +385,14 @@ func TestOrchestratorRun(t *testing.T) {
 		// Expect agent's registry is saved
 		registryPath := filepath.Join(tmpRegistryDir, "hetman.registry.json")
 		assert.FileExists(t, registryPath)
+
 		// Since downstream is online, expect registry file to contain last read position
 		// and the buffered file's content is empty
 		registryFile, _ := os.ReadFile(registryPath)
 		json.Unmarshal(registryFile, &registryContent)
 		logBufferedFile, _ := os.ReadFile(registryContent.BufferedPaths[orch.buffers[0].GetSignature()])
-		assert.Equal(t, int64(4), registryContent.Offsets[tmpLogFile.Name()])
+		assert.Equal(t, int64(4), registryContent.Offsets[tmpLogFiles[0].Name()])
+		assert.Equal(t, int64(4), registryContent.Offsets[tmpLogFiles[1].Name()])
 		assert.Empty(t, logBufferedFile)
 	})
 
@@ -386,14 +415,16 @@ func TestOrchestratorRun(t *testing.T) {
 		}))
 		defer mockFailedServer.Close()
 
-		orch, tmpRegistryDir, tmpLogFile := generateTestOrchestrator(TestOrchestratorOption{
+		orch, tmpRegistryDir, tmpLogFiles := generateTestOrchestrator(TestOrchestratorOption{
 			doneChan:              doneChan,
 			serverURL:             mockFailedServer.URL,
 			backpressureOption:    15,
 			diskBufferPersistence: true,
 		})
 		defer os.RemoveAll(tmpRegistryDir)
-		defer os.Remove(tmpLogFile.Name())
+		for _, tmpLogFile := range tmpLogFiles {
+			defer os.Remove(tmpLogFile.Name())
+		}
 
 		wg.Add(1)
 		go func() {
@@ -410,7 +441,7 @@ func TestOrchestratorRun(t *testing.T) {
 		assert.Nil(t, json.Unmarshal(registryFile, &registryContent))
 
 		// Map forwarder's signature with its "source" tag
-		forwarderSourceAndSignatureMapping := make(map[string]string, 2)
+		forwarderSourceAndSignatureMapping := make(map[string]string, 3)
 		for _, fwd := range orch.forwarders {
 			forwarderSourceAndSignatureMapping[fwd.GetSignature()] = fwd.GetLogSource()
 		}
@@ -418,7 +449,8 @@ func TestOrchestratorRun(t *testing.T) {
 		// Since downstream is offline, expect registry file to contain last read position
 		// and the buffered file containing all scraped logs
 		// Only applicable for agent-mode orchestrator, it should be empty for aggregator-mode one
-		assert.Equal(t, int64(4), registryContent.Offsets[tmpLogFile.Name()])
+		assert.Equal(t, int64(4), registryContent.Offsets[tmpLogFiles[0].Name()])
+		assert.Equal(t, int64(4), registryContent.Offsets[tmpLogFiles[1].Name()])
 		for _, buf := range orch.buffers {
 			bufferSignature := buf.GetSignature()
 			logBufferedFilepath := registryContent.BufferedPaths[bufferSignature]
@@ -427,8 +459,10 @@ func TestOrchestratorRun(t *testing.T) {
 			switch forwarderSourceAndSignatureMapping[bufferSignature] {
 			case "aggregator":
 				assert.Equal(t, "", string(logBufferedFile))
-			default:
+			case tmpLogFiles[0].Name():
 				assert.Equal(t, "a\nb\n", string(logBufferedFile))
+			case tmpLogFiles[1].Name():
+				assert.Equal(t, "c\nd\n", string(logBufferedFile))
 			}
 		}
 	})
