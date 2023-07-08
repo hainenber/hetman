@@ -58,7 +58,7 @@ func NewParser(opts ParserOptions) *Parser {
 	return parser
 }
 
-func (p *Parser) Run(bufferChans []chan pipeline.Data) {
+func (p *Parser) Run(modifierChan chan pipeline.Data) {
 	for {
 		select {
 		case <-p.ctx.Done():
@@ -79,6 +79,7 @@ func (p *Parser) Run(bufferChans []chan pipeline.Data) {
 				for k, v := range parsed.Fields() {
 					data.Parsed[k] = v
 				}
+
 			case "json":
 				parsed, err := p.jsonParser.Parse(data.LogLine)
 				if err != nil {
@@ -95,6 +96,7 @@ func (p *Parser) Run(bufferChans []chan pipeline.Data) {
 					break
 				}
 				data.Parsed = parsedJson
+
 			case "syslog-rfc5424", "syslog-rfc3164":
 				var syslogParser syslogparser.LogParser
 				if p.format == "syslog-rfc5424" {
@@ -115,10 +117,8 @@ func (p *Parser) Run(bufferChans []chan pipeline.Data) {
 				}
 			}
 
-			// Broadcast parsed log to buffers if there are multiple sinks (forwarders)
-			for _, bufferChan := range bufferChans {
-				bufferChan <- data
-			}
+			// Move parsed log to modifier stage in the pipeline for further processing
+			modifierChan <- data
 		default:
 			continue
 		}

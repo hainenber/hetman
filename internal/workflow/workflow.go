@@ -36,6 +36,7 @@ type TargetConfig struct {
 	Id         string            `koanf:"id"`
 	Paths      []string          `koanf:"paths"`
 	Parser     ParserConfig      `koanf:"parser"`
+	Modifier   ModifierConfig    `koanf:"modifier"`
 	Type       string            `koanf:"type"`
 }
 

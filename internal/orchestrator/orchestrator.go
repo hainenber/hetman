@@ -12,6 +12,7 @@ import (
 	"github.com/hainenber/hetman/internal/config"
 	"github.com/hainenber/hetman/internal/forwarder"
 	"github.com/hainenber/hetman/internal/input"
+	"github.com/hainenber/hetman/internal/modifier"
 	"github.com/hainenber/hetman/internal/parser"
 	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/hainenber/hetman/internal/registry"
@@ -25,6 +26,7 @@ type Orchestrator struct {
 	inputWg        sync.WaitGroup
 	tailerWg       sync.WaitGroup
 	parserWg       sync.WaitGroup
+	modifierWg     sync.WaitGroup
 	bufferWg       sync.WaitGroup
 	forwarderWg    sync.WaitGroup
 	backpressureWg sync.WaitGroup
@@ -41,6 +43,7 @@ type Orchestrator struct {
 	tailers             []*tailer.Tailer
 	buffers             []*buffer.Buffer
 	parsers             []*parser.Parser
+	modifiers           []*modifier.Modifier
 	backpressureEngines []*backpressure.Backpressure
 	forwarders          []*forwarder.Forwarder
 
@@ -88,6 +91,7 @@ func NewOrchestrator(options OrchestratorOption) *Orchestrator {
 type WorkflowOptions struct {
 	input            *input.Input
 	parserConfig     workflow.ParserConfig
+	modifierConfig   workflow.ModifierConfig
 	forwarderConfigs []workflow.ForwarderConfig
 	readPosition     int64
 }
@@ -104,6 +108,7 @@ func processPathToForwarderMap(inputToForwarderMap InputToForwarderMap) (InputTo
 			result[target] = &WorkflowOptions{
 				input:            workflowOpts.input,
 				parserConfig:     workflowOpts.parserConfig,
+				modifierConfig:   workflowOpts.modifierConfig,
 				forwarderConfigs: workflowOpts.forwarderConfigs,
 			}
 			continue
@@ -121,6 +126,7 @@ func processPathToForwarderMap(inputToForwarderMap InputToForwarderMap) (InputTo
 				result[translatedPath] = &WorkflowOptions{
 					input:            workflowOpts.input,
 					parserConfig:     workflowOpts.parserConfig,
+					modifierConfig:   workflowOpts.modifierConfig,
 					forwarderConfigs: workflowOpts.forwarderConfigs,
 				}
 			}
@@ -151,6 +157,7 @@ func (o *Orchestrator) Run() struct{} {
 		if !strings.Contains(path, "/") {
 			processedPathToForwarderMap[path] = &WorkflowOptions{
 				parserConfig:     wf.Parser,
+				modifierConfig:   wf.Modifier,
 				forwarderConfigs: wf.Forwarders,
 			}
 			continue
@@ -176,6 +183,7 @@ func (o *Orchestrator) Run() struct{} {
 		processedPathToForwarderMap[path] = &WorkflowOptions{
 			input:            i,
 			parserConfig:     wf.Parser,
+			modifierConfig:   wf.Modifier,
 			forwarderConfigs: wf.Forwarders,
 		}
 
@@ -246,7 +254,8 @@ func (o *Orchestrator) Run() struct{} {
 	return struct{}{}
 }
 
-// Execute tailer->buffer->forwarder workflow
+// Execute tailer->modifier->parser->buffer->forwarder workflow
+// There's a blanket backpressure engine for the entire workflow
 func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderMap) {
 	// A backpressure engine strictly handles one workflow
 	o.logger.Info().Msg("Initializing backpressure registry...")
@@ -265,7 +274,6 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 	o.backpressureEngines = append(o.backpressureEngines, backpressureEngine)
 
 	// Initiate workflow from path-to-forwarder map
-	// TODO: Make Workflow own struct
 	for translatedPath, workflowOpts := range processedPathToForwarderMap {
 		// Check if there's any saved offset for this file
 		// This can be override by read position present in workflow options
@@ -301,11 +309,17 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 			o.logger.Info().Msgf("Tailer for path %v has been registered into input", translatedPath)
 		}
 
-		// Each workflow will have a single parser
+		// Each workflow has a single parser
 		ps := parser.NewParser(parser.ParserOptions{
 			Format:  workflowOpts.parserConfig.Format,
 			Pattern: workflowOpts.parserConfig.Pattern,
 			Logger:  o.logger,
+		})
+
+		// Each workflow has a single modifier
+		mod := modifier.NewModifier(modifier.ModifierOptions{
+			ModifierSettings: workflowOpts.modifierConfig,
+			Logger:           o.logger,
 		})
 
 		// Create a buffer associative with each forwarder
@@ -367,7 +381,16 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 		o.parserWg.Add(1)
 		go func() {
 			defer o.parserWg.Done()
-			ps.Run(lo.Map(buffers, func(item *buffer.Buffer, _ int) chan pipeline.Data { return item.BufferChan }))
+			ps.Run(mod.ModifierChan)
+		}()
+
+		// Start modifying parsed logs
+		o.modifiers = append(o.modifiers, mod)
+		o.modifierWg.Add(1)
+		go func() {
+			defer o.modifierWg.Done()
+			bufferChans := lo.Map(buffers, func(item *buffer.Buffer, _ int) chan pipeline.Data { return item.BufferChan })
+			mod.Run(bufferChans)
 		}()
 	}
 }
@@ -377,7 +400,7 @@ func (o *Orchestrator) Close() {
 	o.cancelFunc()
 	o.orchWg.Wait()
 
-	// Close following components in order: input -> tailer -> buffer -> forwarder
+	// Close following components in order: input -> tailer -> buffer -> modifier -> parser -> forwarder
 	// Ensure all consumed log entries are flushed before closing
 	for _, i := range o.inputs {
 		i.Close()
@@ -401,6 +424,12 @@ func (o *Orchestrator) Close() {
 		p.Close()
 	}
 	o.logger.Info().Msg("Sent close signal to created parsers")
+	o.parserWg.Wait()
+
+	for _, m := range o.modifiers {
+		m.Close()
+	}
+	o.logger.Info().Msg("Sent close signal to created modifiers")
 	o.parserWg.Wait()
 
 	for _, f := range o.forwarders {
