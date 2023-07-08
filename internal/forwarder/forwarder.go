@@ -42,6 +42,7 @@ type Forwarder struct {
 }
 
 type ForwarderSettings struct {
+	Type            string
 	URL             string
 	AddTags         map[string]string
 	CompressRequest bool
@@ -181,7 +182,6 @@ func (f *Forwarder) forward(forwardArgs ...pipeline.Data) error {
 		if sentTime == "" {
 			sentTime = fmt.Sprint(time.Now().UnixNano())
 		}
-		// TODO: Not to use high-cardinality parsed fields as log labels
 		payload[i] = PayloadStream{
 			Stream: lo.Assign(f.settings.AddTags, arg.Parsed, arg.Labels),
 			Values: [][]string{{sentTime, arg.LogLine}},

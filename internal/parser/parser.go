@@ -35,7 +35,6 @@ type ParserOptions struct {
 }
 
 func NewParser(opts ParserOptions) *Parser {
-
 	ctx, cancelFunc := context.WithCancel(context.Background())
 
 	metrics.Meters.InitializedComponents["parser"].Add(ctx, 1)
