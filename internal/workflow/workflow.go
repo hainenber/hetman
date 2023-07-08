@@ -7,6 +7,7 @@ import (
 )
 
 type ForwarderConfig struct {
+	Type            string            `koanf:"type"`
 	URL             string            `koanf:"url"`
 	AddTags         map[string]string `koanf:"add_tags"`
 	CompressRequest bool              `koanf:"compress_request"`

@@ -12,7 +12,8 @@ targets:
     parser:
       format: json
     forwarders:
-      - url: http://localhost:3100/loki/api/v1/push
+      - type: loki
+        url: http://localhost:3100/loki/api/v1/push
         add_tags:
           label: hetman
           source: nginx
@@ -25,7 +26,8 @@ targets:
       - testdata/syslog/*.log
       - testdata/nginx/*.log
     forwarders:
-      - url: http://localhost:3100/loki/api/v1/push
+      - type: loki
+        url: http://localhost:3100/loki/api/v1/push
         add_tags:
           label: hetman
           source: misc
