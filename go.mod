@@ -16,6 +16,8 @@ require (
 	github.com/satyrius/gonx v1.4.0
 	github.com/spf13/cobra v1.7.0
 	github.com/stretchr/testify v1.8.4
+	github.com/tidwall/gjson v1.14.4
+	github.com/tidwall/sjson v1.2.5
 	github.com/valyala/fastjson v1.6.4
 	go.opentelemetry.io/otel v1.16.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp v0.39.0
@@ -42,6 +44,8 @@ require (
 	github.com/rogpeppe/go-internal v1.10.0 // indirect
 	github.com/smartystreets/goconvey v1.8.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/internal/retry v1.16.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric v0.39.0 // indirect
 	go.opentelemetry.io/otel/trace v1.16.0 // indirect
