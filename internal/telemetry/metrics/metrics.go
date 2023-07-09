@@ -101,7 +101,7 @@ func InitiateMetricProvider(logger *zerolog.Logger) (func(), error) {
 		return func() {}, err
 	}
 	initializedComponents := make(map[string]metric.Int64UpDownCounter, 4)
-	for _, name := range []string{"input", "tailer", "parser", "buffer", "forwarder"} {
+	for _, name := range []string{"input", "tailer", "parser", "modifier", "buffer", "forwarder"} {
 		metricName := fmt.Sprintf("initialized%s", toTitle(name))
 		initializedComponent, err := meter.Int64UpDownCounter(metricName,
 			metric.WithDescription("Count of initialized "+name),

@@ -158,8 +158,9 @@ func (c Config) Process() (map[string]workflow.Workflow, error) {
 		if len(target.Paths) == 0 {
 			if headlessWorkflowId, ok := lo.Coalesce(target.Id, uuid.New().String()); ok {
 				workflows[headlessWorkflowId] = workflow.Workflow{
-					Forwarders: target.Forwarders,
 					Parser:     target.Parser,
+					Modifier:   target.Modifier,
+					Forwarders: target.Forwarders,
 				}
 			}
 		}
@@ -180,8 +181,9 @@ func (c Config) Process() (map[string]workflow.Workflow, error) {
 				fwdConfs.Forwarders = append(fwdConfs.Forwarders, target.Forwarders...)
 			} else {
 				workflows[targetPath] = workflow.Workflow{
-					Forwarders: target.Forwarders,
 					Parser:     target.Parser,
+					Modifier:   target.Modifier,
+					Forwarders: target.Forwarders,
 				}
 			}
 		}

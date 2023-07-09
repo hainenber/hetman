@@ -26,8 +26,8 @@ type TestParserOption struct {
 
 func generateParserParsingTestCase(t assert.TestingT, opt TestParserOption) {
 	var (
-		bufferChan = make(chan pipeline.Data)
-		wg         sync.WaitGroup
+		modifierChan = make(chan pipeline.Data)
+		wg           sync.WaitGroup
 	)
 
 	ps := NewParser(ParserOptions{
@@ -40,7 +40,7 @@ func generateParserParsingTestCase(t assert.TestingT, opt TestParserOption) {
 	go func() {
 		defer wg.Done()
 		ps.ParserChan <- pipeline.Data{LogLine: opt.InputLogLine}
-		parsedData := <-bufferChan
+		parsedData := <-modifierChan
 		assert.Equal(t, opt.ExpectedParsedMap, parsedData.Parsed)
 		ps.Close()
 	}()
@@ -48,7 +48,7 @@ func generateParserParsingTestCase(t assert.TestingT, opt TestParserOption) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		ps.Run([]chan pipeline.Data{bufferChan})
+		ps.Run(modifierChan)
 	}()
 
 	wg.Wait()

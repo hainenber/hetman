@@ -1,8 +1,8 @@
 package pipeline
 
 type Data struct {
-	Timestamp string
-	LogLine   string
-	Labels    map[string]string
-	Parsed    map[string]string
+	Timestamp string            `json:"timestamp"`
+	LogLine   string            `json:"logLine"`
+	Labels    map[string]string `json:"labels"`
+	Parsed    map[string]string `json:"parsed"`
 }

@@ -11,6 +11,19 @@ targets:
       - testdata/nginx/*.log 
     parser:
       format: json
+    modifier: 
+      # Add some fields for testing
+      add_fields:
+        added: "true"
+        modified: true
+      # Drop parsed "message" field
+      drop_fields:
+        - message
+      # Replace parsed "password" field with 4 consecutive asterisks
+      replace_fields
+        - path: "parsed.password"
+          pattern: ".*"
+          replacement: "****"
     forwarders:
       - type: loki
         url: http://localhost:3100/loki/api/v1/push
@@ -20,6 +33,7 @@ targets:
           dest: loki
         compress_request: true 
         probe_readiness: false
+        
   - id: misc
     type: file
     paths:

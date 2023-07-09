@@ -6,6 +6,18 @@ import (
 	"strings"
 )
 
+type ModifierConfig struct {
+	AddFields     map[string]string     `koanf:"add_fields"`
+	DropFields    []string              `koanf:"drop_fields"`
+	ReplaceFields []ReplaceFieldSetting `koanf:"replace_fields"`
+}
+
+type ReplaceFieldSetting struct {
+	Path        string `koanf:"path"`
+	Pattern     string `koanf:"pattern"`
+	Replacement string `koanf:"replacement"`
+}
+
 type ForwarderConfig struct {
 	Type            string            `koanf:"type"`
 	URL             string            `koanf:"url"`
@@ -24,13 +36,14 @@ type TargetConfig struct {
 	Id         string            `koanf:"id"`
 	Paths      []string          `koanf:"paths"`
 	Parser     ParserConfig      `koanf:"parser"`
+	Modifier   ModifierConfig    `koanf:"modifier"`
 	Type       string            `koanf:"type"`
 }
 
 type Workflow struct {
 	Forwarders []ForwarderConfig
 	Parser     ParserConfig
-	Filter     string
+	Modifier   ModifierConfig
 }
 
 // CreateForwarderSignature generates signature for a forwarder by hashing its configuration values along with ordered tag key-values
