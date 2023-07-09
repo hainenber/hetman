@@ -140,7 +140,8 @@ func (c Config) Process() (map[string]workflow.Workflow, error) {
 			// Probe readiness for downstream services
 			// TODO: add readiness probe for other popular downstreams as well
 			if fwd.ProbeReadiness {
-				if strings.Contains(fwd.URL, "/loki") {
+				switch fwd.Type {
+				case "loki":
 					if err = probeReadiness(fwd.URL, "/ready"); err != nil {
 						return nil, err
 					}

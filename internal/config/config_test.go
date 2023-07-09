@@ -36,6 +36,7 @@ func prepareTestConfig() (*Config, []string, string) {
 				Id: "foo",
 				Forwarders: []workflow.ForwarderConfig{
 					{
+						Type:           "loki",
 						URL:            "abc.com",
 						ProbeReadiness: false,
 					},
@@ -53,10 +54,8 @@ func cleanup(tmpDir string) {
 
 func TestNewConfig(t *testing.T) {
 	conf, err := NewConfig("hetman.agent.yaml.example")
-	if err != nil {
-		t.Errorf("expect nil, got %v", err)
-	}
-
+	assert.Nil(t, err)
+	assert.NotNil(t, conf)
 	assert.Equal(t, 2, len(conf.Targets))
 	assert.Equal(t, "/tmp", conf.GlobalConfig.RegistryDir)
 
@@ -86,10 +85,7 @@ func TestDetectDuplicateTargetID(t *testing.T) {
 		},
 	}
 
-	err := conf.DetectDuplicateTargetID()
-	if err == nil {
-		t.Errorf("expect %v, got nil", err)
-	}
+	assert.NotNil(t, conf.DetectDuplicateTargetID())
 }
 
 func TestProcess(t *testing.T) {
@@ -122,7 +118,7 @@ func TestProcess(t *testing.T) {
 		conf, _, tmpDir := prepareTestConfig()
 		defer cleanup(tmpDir)
 		conf.Targets[0].Forwarders = []workflow.ForwarderConfig{
-			{URL: testServer.URL + "/loki/v1/api/push", ProbeReadiness: true},
+			{URL: testServer.URL, ProbeReadiness: true},
 		}
 		processed, err := conf.Process()
 		assert.NotNil(t, processed)
@@ -137,7 +133,7 @@ func TestProcess(t *testing.T) {
 		defer cleanup(tmpDir)
 
 		conf.Targets[0].Forwarders = []workflow.ForwarderConfig{
-			{URL: testServer.URL + "/loki/v1/api/push", ProbeReadiness: true},
+			{URL: testServer.URL, Type: "loki", ProbeReadiness: true},
 		}
 		processed, err := conf.Process()
 		assert.Nil(t, processed)
@@ -153,7 +149,7 @@ func TestProcess(t *testing.T) {
 		conf, _, tmpDir := prepareTestConfig()
 		defer cleanup(tmpDir)
 		conf.Targets[0].Forwarders = []workflow.ForwarderConfig{
-			{URL: testServer.URL + "/loki/v1/api/push", ProbeReadiness: false},
+			{URL: testServer.URL, Type: "loki", ProbeReadiness: false},
 		}
 		processed, err := conf.Process()
 		assert.NotNil(t, processed)
@@ -166,7 +162,7 @@ func TestProbeReadiness(t *testing.T) {
 	t.Run("successfully probe readiness of Loki service", func(t *testing.T) {
 		testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 		defer testServer.Close()
-		err := probeReadiness(testServer.URL+"/loki/v1/api/push", "/ready")
+		err := probeReadiness(testServer.URL, "/ready")
 		assert.Nil(t, err)
 	})
 	t.Run("failed to probe readiness of Loki service", func(t *testing.T) {
@@ -174,7 +170,7 @@ func TestProbeReadiness(t *testing.T) {
 			w.WriteHeader(http.StatusInternalServerError)
 		}))
 		defer testServer.Close()
-		err := probeReadiness(testServer.URL+"/loki/v1/api/push", "/ready")
+		err := probeReadiness(testServer.URL, "/ready")
 		assert.NotNil(t, err)
 	})
 }
