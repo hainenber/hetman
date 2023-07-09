@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/hainenber/hetman/internal/constants"
 	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/hainenber/hetman/internal/telemetry/metrics"
 	"github.com/rs/zerolog"
@@ -137,7 +138,7 @@ func (f *Forwarder) Run(bufferChan chan pipeline.Data, backpressureChan chan int
 			batch = []pipeline.Data{}
 
 		default:
-			continue
+			time.Sleep(constants.TIME_WAIT_FOR_NEXT_ITERATION)
 		}
 	}
 }

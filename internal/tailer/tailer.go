@@ -7,8 +7,10 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/hainenber/hetman/internal/backpressure"
+	"github.com/hainenber/hetman/internal/constants"
 	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/hainenber/hetman/internal/tailer/state"
 	"github.com/hainenber/hetman/internal/telemetry/metrics"
@@ -122,7 +124,7 @@ func (t *Tailer) Run(parserChan chan pipeline.Data) {
 				parserChan <- line
 
 			default:
-				continue
+				time.Sleep(constants.TIME_WAIT_FOR_NEXT_ITERATION)
 			}
 		}
 	} else {
@@ -161,7 +163,7 @@ func (t *Tailer) Run(parserChan chan pipeline.Data) {
 				}
 
 			default:
-				continue
+				time.Sleep(constants.TIME_WAIT_FOR_NEXT_ITERATION)
 			}
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/hainenber/hetman/internal/constants"
 	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/hainenber/hetman/internal/telemetry/metrics"
 	"github.com/hainenber/hetman/internal/workflow"
@@ -102,7 +103,7 @@ func (m *Modifier) Run(bufferChans []chan pipeline.Data) {
 				bufferChan <- modified
 			}
 		default:
-			time.Sleep(500 * time.Millisecond)
+			time.Sleep(constants.TIME_WAIT_FOR_NEXT_ITERATION)
 		}
 	}
 }

@@ -4,7 +4,9 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
+	"time"
 
+	"github.com/hainenber/hetman/internal/constants"
 	"github.com/hainenber/hetman/internal/tailer/state"
 )
 
@@ -53,7 +55,7 @@ func (b *Backpressure) Run() {
 			atomic.StoreInt64(&b.current, atomic.AddInt64(&b.current, int64(update)))
 
 		default:
-			continue
+			time.Sleep(constants.TIME_WAIT_FOR_NEXT_ITERATION)
 		}
 	}
 }
