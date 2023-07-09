@@ -20,7 +20,7 @@ targets:
       drop_fields:
         - message
       # Replace parsed "password" field with 4 consecutive asterisks
-      replace_fields
+      replace_fields:
         - path: "parsed.password"
           pattern: ".*"
           replacement: "****"
