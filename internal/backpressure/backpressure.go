@@ -42,7 +42,12 @@ func (b *Backpressure) Run() {
 			b.flush()
 			return
 
-		case update := <-b.UpdateChan:
+		case update, ok := <-b.UpdateChan:
+			// Skip default value if channel is closed
+			// This will help ending the goroutine
+			if !ok {
+				continue
+			}
 			// Compute tailer state, based on
 			stateToBroadcast := b.computeTailerState(update)
 
