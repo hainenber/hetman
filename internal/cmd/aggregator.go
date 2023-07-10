@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/hainenber/hetman/internal/forwarder"
 	"github.com/hainenber/hetman/internal/pipeline"
+	"github.com/rs/zerolog/log"
 )
 
 type Aggregator struct {
@@ -104,9 +104,12 @@ func (a *Aggregator) Run() {
 	}()
 
 	// Wait until orchestrator's components have finished instantiation of components
+	// If not, shutdown internal agent and exit with non-zero err code
 	for !agent.IsReady() {
 		if sleepCount > 20 {
-			log.Fatalf("Aggregator waiting too long for internal agent's initialization, 10 seconds have already elapsed!")
+			agent.Orchestrator.Shutdown()
+			wg.Wait()
+			log.Fatal().Msg("Aggregator waiting too long for internal agent's initialization, 10 seconds have already elapsed! Please rerun the aggregator.")
 		}
 		time.Sleep(500 * time.Millisecond)
 		sleepCount++

@@ -395,6 +395,11 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 	}
 }
 
+// Shutdown sends an empty struct to internal done channel for unblocking entire Run() method
+func (o *Orchestrator) Shutdown() {
+	o.doneChan <- struct{}{}
+}
+
 func (o *Orchestrator) Close() {
 	// Stop orchestrator's periodic state persistence to disk
 	o.cancelFunc()
