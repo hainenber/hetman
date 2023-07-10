@@ -41,14 +41,21 @@ func (b *Buffer) Run(fwdChan chan pipeline.Data) {
 		case <-b.ctx.Done():
 			close(fwdChan)
 			return
-		// If received scraped logs from tailer,
-		// store tailed log line to forwarder's channel
-		case line := <-b.BufferChan:
+
+		case line, ok := <-b.BufferChan:
+			// Skip to next run when default value is received
+			// This helps ending the goroutine
+			if !ok {
+				continue
+			}
+			// If received scraped logs from tailer,
+			// store tailed log line to forwarder's channel
 			fwdChan <- line
 			lastLogTime = time.Now()
-		// Send offset to forwarder's channel if the time since last log is longer
-		// than specific threshold
+
 		case <-b.ticker.C:
+			// Send offset to forwarder's channel if the time since last log is longer
+			// than specific threshold
 			// TODO: Make this configurable
 			if time.Since(lastLogTime) > time.Duration(1*time.Second) {
 				fwdChan <- pipeline.Data{LogLine: b.signature}

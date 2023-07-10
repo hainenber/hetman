@@ -47,10 +47,15 @@ func (m *Modifier) Run(bufferChans []chan pipeline.Data) {
 		select {
 		case <-m.ctx.Done():
 			return
-		case parsed := <-m.ModifierChan:
-			modified := parsed
+		case parsed, ok := <-m.ModifierChan:
+			// Skip to next run when default value is received
+			// This helps ending the goroutine
+			if !ok {
+				continue
+			}
 
 			// Modify parsed data
+			modified := parsed
 			if m.modifierSettings.AddFields != nil {
 				for k, v := range m.modifierSettings.AddFields {
 					modified.Parsed[k] = v
