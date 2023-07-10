@@ -24,6 +24,7 @@ type TestOrchestratorOption struct {
 	serverURL             string
 	backpressureOption    int
 	diskBufferPersistence bool
+	withJsonTarget        bool
 }
 
 func TestMain(m *testing.M) {
@@ -34,12 +35,14 @@ func TestMain(m *testing.M) {
 func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string, []*os.File) {
 	tmpRegistryDir, _ := os.MkdirTemp("", "orchestrator-backpressure-dir-")
 	tmpLogDir, _ := os.MkdirTemp("", "")
-	tmpLogFile1, _ := os.CreateTemp(tmpLogDir, "orchestrator-backpressure-file-")
-	tmpLogFile2, _ := os.CreateTemp(tmpLogDir, "orchestrator-backpressure-file-")
+	tmpLogFile1, _ := os.CreateTemp(tmpLogDir, "orchestrator-backpressure-file1-")
+	tmpLogFile2, _ := os.CreateTemp(tmpLogDir, "orchestrator-backpressure-file2-")
 	os.WriteFile(tmpLogFile1.Name(), []byte("a\nb\n"), 0777)
 	os.WriteFile(tmpLogFile2.Name(), []byte("c\nd\n"), 0777)
 
-	orch := NewOrchestrator(OrchestratorOption{
+	tmpLogFiles := []*os.File{tmpLogFile1, tmpLogFile2}
+
+	orchOption := OrchestratorOption{
 		DoneChan: opt.doneChan,
 		Config: &config.Config{
 			GlobalConfig: config.GlobalConfig{
@@ -49,12 +52,13 @@ func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string
 			},
 			Targets: []workflow.TargetConfig{
 				{
-					Id: "agent",
+					Id: "agent1",
 					Paths: []string{
 						filepath.Join(tmpLogDir, "*"),
 					},
 					Forwarders: []workflow.ForwarderConfig{
 						{
+							Type:    "loki",
 							URL:     opt.serverURL,
 							AddTags: map[string]string{"a": "b", "c": "d"},
 						},
@@ -64,6 +68,7 @@ func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string
 					Id: "aggregator",
 					Forwarders: []workflow.ForwarderConfig{
 						{
+							Type:    "loki",
 							URL:     opt.serverURL,
 							AddTags: map[string]string{"b": "a", "d": "c"},
 						},
@@ -71,8 +76,39 @@ func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string
 				},
 			},
 		},
-	})
-	return orch, tmpRegistryDir, []*os.File{tmpLogFile1, tmpLogFile2}
+	}
+
+	if opt.withJsonTarget {
+		tmpLogFile3, _ := os.CreateTemp(tmpLogDir, "orchestrator-backpressure-file3-")
+		os.WriteFile(tmpLogFile3.Name(), []byte(`{"a":"b"}`), 0777)
+		orchOption.Config.Targets = append(orchOption.Config.Targets, workflow.TargetConfig{
+			Id: "agent2",
+			Paths: []string{
+				tmpLogFile3.Name(),
+			},
+			Parser: workflow.ParserConfig{
+				Format: "json",
+			},
+			Modifier: workflow.ModifierConfig{
+				AddFields:  map[string]string{"added": "true"},
+				DropFields: []string{"a"},
+				ReplaceFields: []workflow.ReplaceFieldSetting{
+					{Path: "parsed.c", Pattern: ".*", Replacement: "****"},
+				},
+			},
+			Forwarders: []workflow.ForwarderConfig{
+				{
+					Type:    "loki",
+					URL:     opt.serverURL,
+					AddTags: map[string]string{"a": "b", "c": "d"},
+				},
+			},
+		})
+		tmpLogFiles = append(tmpLogFiles, tmpLogFile3)
+	}
+
+	orch := NewOrchestrator(orchOption)
+	return orch, tmpRegistryDir, tmpLogFiles
 }
 
 func TestNewOrchestrator(t *testing.T) {
@@ -156,15 +192,16 @@ func TestProcessPathToForwarderMap(t *testing.T) {
 }
 
 func TestOrchestratorBackpressure(t *testing.T) {
-	t.Parallel()
 	t.Run("block tailer when backpressure's memory limit breached", func(t *testing.T) {
 		var (
 			wg               sync.WaitGroup
 			doneChan         = make(chan struct{}, 1)
+			reqCount         int
 			logDeliveredChan = make(chan struct{}, 100)
 		)
 		// A mock server that always returns 500
 		failedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			reqCount++
 			w.WriteHeader(http.StatusInternalServerError)
 			logDeliveredChan <- struct{}{}
 		}))
@@ -215,7 +252,7 @@ func TestOrchestratorBackpressure(t *testing.T) {
 			wg               sync.WaitGroup
 			reqCount         int
 			doneChan         = make(chan struct{})
-			logDeliveredChan = make(chan struct{}, 10)
+			logDeliveredChan = make(chan struct{}, 50)
 		)
 		// A mock server that always returns 500
 		offlineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -233,7 +270,8 @@ func TestOrchestratorBackpressure(t *testing.T) {
 		orch, tmpRegistryDir, tmpLogFiles := generateTestOrchestrator(TestOrchestratorOption{
 			doneChan:           doneChan,
 			serverURL:          offlineServer.URL,
-			backpressureOption: 15,
+			backpressureOption: 50,
+			withJsonTarget:     true,
 		})
 		defer os.RemoveAll(tmpRegistryDir)
 		for _, tmpLogFile := range tmpLogFiles {
@@ -265,7 +303,7 @@ func TestOrchestratorBackpressure(t *testing.T) {
 		wg.Wait()
 
 		assert.Equal(t, state.Closed, orch.tailers[0].GetState())
-		assert.Equal(t, int64(4), orch.backpressureEngines[0].GetInternalCounter())
+		assert.Equal(t, int64(13), orch.backpressureEngines[0].GetInternalCounter())
 	})
 
 	t.Run("do not block tailer when backpressure's memory limit is not breached, with online upstream", func(t *testing.T) {
@@ -296,7 +334,8 @@ func TestOrchestratorBackpressure(t *testing.T) {
 		orch, tmpRegistryDir, tmpLogFiles := generateTestOrchestrator(TestOrchestratorOption{
 			doneChan:           doneChan,
 			serverURL:          onlineServer.URL,
-			backpressureOption: 15,
+			backpressureOption: 50,
+			withJsonTarget:     true,
 		})
 		defer os.RemoveAll(tmpRegistryDir)
 		for _, tmpLogFile := range tmpLogFiles {
@@ -331,12 +370,14 @@ func TestOrchestratorRun(t *testing.T) {
 	t.Parallel()
 	t.Run("successfully run and cleanup, happy path", func(t *testing.T) {
 		var (
-			doneChan        = make(chan struct{})
-			wg              sync.WaitGroup
-			reqCount        int
-			orch            *Orchestrator
-			registryContent registry.Registry
-			sourceLabels    = make(map[string]bool)
+			doneChan          = make(chan struct{})
+			doneChantSent     bool
+			wg                sync.WaitGroup
+			reqCount          int
+			orch              *Orchestrator
+			registryContent   registry.Registry
+			sourceLabels      = make(map[string]bool)
+			sourceLabelsMutex = sync.RWMutex{}
 		)
 
 		mux := http.NewServeMux()
@@ -346,8 +387,9 @@ func TestOrchestratorRun(t *testing.T) {
 		orch, tmpRegistryDir, tmpLogFiles := generateTestOrchestrator(TestOrchestratorOption{
 			doneChan:              doneChan,
 			serverURL:             mockServer.URL,
-			backpressureOption:    15,
+			backpressureOption:    50,
 			diskBufferPersistence: true,
+			withJsonTarget:        true,
 		})
 		defer os.RemoveAll(tmpRegistryDir)
 		for _, tmpLogFile := range tmpLogFiles {
@@ -355,6 +397,8 @@ func TestOrchestratorRun(t *testing.T) {
 		}
 
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			sourceLabelsMutex.Lock()
+
 			reqCount++
 			payload := forwarder.Payload{}
 			json.NewDecoder(r.Body).Decode(&payload)
@@ -366,12 +410,17 @@ func TestOrchestratorRun(t *testing.T) {
 				assert.True(t, orch.DoneInstantiated)
 			}
 			// Expect "source" label to be different
-			if reqCount == 2 {
-				assert.Len(t, sourceLabels, 2)
+			if reqCount == 3 && !doneChantSent {
+				assert.Len(t, sourceLabels, 3)
 				assert.Contains(t, sourceLabels, tmpLogFiles[0].Name())
 				assert.Contains(t, sourceLabels, tmpLogFiles[1].Name())
+				assert.Contains(t, sourceLabels, tmpLogFiles[2].Name())
 				doneChan <- struct{}{}
+				doneChantSent = true
+
 			}
+
+			sourceLabelsMutex.Unlock()
 		})
 
 		wg.Add(1)
@@ -418,8 +467,9 @@ func TestOrchestratorRun(t *testing.T) {
 		orch, tmpRegistryDir, tmpLogFiles := generateTestOrchestrator(TestOrchestratorOption{
 			doneChan:              doneChan,
 			serverURL:             mockFailedServer.URL,
-			backpressureOption:    15,
+			backpressureOption:    50,
 			diskBufferPersistence: true,
+			withJsonTarget:        true,
 		})
 		defer os.RemoveAll(tmpRegistryDir)
 		for _, tmpLogFile := range tmpLogFiles {
