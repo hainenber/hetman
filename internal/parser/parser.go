@@ -4,9 +4,7 @@ import (
 	"bufio"
 	"context"
 	"os"
-	"time"
 
-	"github.com/hainenber/hetman/internal/constants"
 	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/hainenber/hetman/internal/telemetry/metrics"
 	"github.com/jeromer/syslogparser"
@@ -121,8 +119,6 @@ func (p *Parser) Run(modifierChan chan pipeline.Data) {
 
 			// Move parsed log to modifier stage in the pipeline for further processing
 			modifierChan <- data
-		default:
-			time.Sleep(constants.TIME_WAIT_FOR_NEXT_ITERATION)
 		}
 	}
 }

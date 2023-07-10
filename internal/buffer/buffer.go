@@ -6,7 +6,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/hainenber/hetman/internal/constants"
 	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/hainenber/hetman/internal/telemetry/metrics"
 )
@@ -54,8 +53,6 @@ func (b *Buffer) Run(fwdChan chan pipeline.Data) {
 			if time.Since(lastLogTime) > time.Duration(1*time.Second) {
 				fwdChan <- pipeline.Data{LogLine: b.signature}
 			}
-		default:
-			time.Sleep(constants.TIME_WAIT_FOR_NEXT_ITERATION)
 		}
 	}
 }

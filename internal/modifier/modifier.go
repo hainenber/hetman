@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"regexp"
-	"time"
 
-	"github.com/hainenber/hetman/internal/constants"
 	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/hainenber/hetman/internal/telemetry/metrics"
 	"github.com/hainenber/hetman/internal/workflow"
@@ -102,8 +100,6 @@ func (m *Modifier) Run(bufferChans []chan pipeline.Data) {
 			for _, bufferChan := range bufferChans {
 				bufferChan <- modified
 			}
-		default:
-			time.Sleep(constants.TIME_WAIT_FOR_NEXT_ITERATION)
 		}
 	}
 }

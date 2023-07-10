@@ -7,10 +7,8 @@ import (
 	"log"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/hainenber/hetman/internal/backpressure"
-	"github.com/hainenber/hetman/internal/constants"
 	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/hainenber/hetman/internal/tailer/state"
 	"github.com/hainenber/hetman/internal/telemetry/metrics"
@@ -123,8 +121,6 @@ func (t *Tailer) Run(parserChan chan pipeline.Data) {
 				// Relay tailed log line to next component in the workflow, buffer
 				parserChan <- line
 
-			default:
-				time.Sleep(constants.TIME_WAIT_FOR_NEXT_ITERATION)
 			}
 		}
 	} else {
@@ -161,9 +157,6 @@ func (t *Tailer) Run(parserChan chan pipeline.Data) {
 					Timestamp: fmt.Sprint(line.Time.UnixNano()),
 					LogLine:   line.Text,
 				}
-
-			default:
-				time.Sleep(constants.TIME_WAIT_FOR_NEXT_ITERATION)
 			}
 		}
 	}

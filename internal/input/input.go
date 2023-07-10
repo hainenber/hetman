@@ -5,10 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/hainenber/hetman/internal/constants"
 	"github.com/hainenber/hetman/internal/tailer"
 	"github.com/hainenber/hetman/internal/telemetry/metrics"
 	"github.com/rs/zerolog"
@@ -142,8 +140,6 @@ func (i *Input) Run() {
 					i.logger.Error().Err(err).Msg("")
 					continue
 				}
-			default:
-				time.Sleep(constants.TIME_WAIT_FOR_NEXT_ITERATION)
 			}
 		}
 	}()
