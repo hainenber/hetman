@@ -90,8 +90,8 @@ func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string
 				Format: "json",
 			},
 			Modifier: workflow.ModifierConfig{
-				AddFields:  map[string]string{"added": "true"},
-				DropFields: []string{"a"},
+				AddFields:  map[string]string{"parsed.added": "true"},
+				DropFields: []string{"parsed.a"},
 				ReplaceFields: []workflow.ReplaceFieldSetting{
 					{Path: "parsed.c", Pattern: ".*", Replacement: "****"},
 				},

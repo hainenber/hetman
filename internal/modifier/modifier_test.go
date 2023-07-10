@@ -22,10 +22,10 @@ func TestNewModifier(t *testing.T) {
 	mod := NewModifier(ModifierOptions{
 		ModifierSettings: workflow.ModifierConfig{
 			AddFields: map[string]string{
-				"foo": "bar",
+				"parsed.foo": "bar",
 			},
 			DropFields: []string{
-				"message",
+				"parsed.message",
 			},
 			ReplaceFields: []workflow.ReplaceFieldSetting{
 				{Path: "parsed.password", Pattern: ".*", Replacement: "****"},
@@ -43,10 +43,10 @@ func TestModifierRun(t *testing.T) {
 	mod := NewModifier(ModifierOptions{
 		ModifierSettings: workflow.ModifierConfig{
 			AddFields: map[string]string{
-				"foo": "bar",
+				"parsed.foo": "bar",
 			},
 			DropFields: []string{
-				"message",
+				"parsed.message",
 			},
 			ReplaceFields: []workflow.ReplaceFieldSetting{
 				{Path: "parsed.password", Pattern: ".*", Replacement: "****"},

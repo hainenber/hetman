@@ -54,26 +54,35 @@ func (m *Modifier) Run(bufferChans []chan pipeline.Data) {
 				continue
 			}
 
-			// Modify parsed data
-			modified := parsed
+			var modified pipeline.Data
+
+			// Unmarshal data into JSON for dot-notation traversal and modification
+			marshalled, err := json.Marshal(parsed)
+			if err != nil {
+				m.logger.Error().Err(err).Msg("")
+			}
+			marshalledString := string(marshalled)
+
+			// Add fields
 			if m.modifierSettings.AddFields != nil {
 				for k, v := range m.modifierSettings.AddFields {
-					modified.Parsed[k] = v
+					marshalledString, err = sjson.Set(marshalledString, k, v)
+					if err != nil {
+						m.logger.Error().Err(err).Msg("")
+					}
 				}
 			}
 
+			// Drop fields
 			for _, dropped := range m.modifierSettings.DropFields {
-				delete(modified.Parsed, dropped)
-			}
-
-			if m.modifierSettings.ReplaceFields != nil {
-				// Unmarshal data into JSON for dot-notation traversal and modification
-				marshalled, err := json.Marshal(modified)
+				marshalledString, err = sjson.Delete(marshalledString, dropped)
 				if err != nil {
 					m.logger.Error().Err(err).Msg("")
 				}
-				marshalledString := string(marshalled)
+			}
 
+			// Replace fields
+			if m.modifierSettings.ReplaceFields != nil {
 				for _, replaceFieldSetting := range m.modifierSettings.ReplaceFields {
 					// 1. Fetch data by the path, skip to next fields
 					replacingData := gjson.Get(marshalledString, replaceFieldSetting.Path)
@@ -94,11 +103,11 @@ func (m *Modifier) Run(bufferChans []chan pipeline.Data) {
 						m.logger.Error().Err(err).Msg("")
 					}
 				}
+			}
 
-				// Unmarshal data back to pipeline.Data struct
-				if err := json.Unmarshal([]byte(marshalledString), &modified); err != nil {
-					m.logger.Error().Err(err).Msg("")
-				}
+			// Unmarshal data back to pipeline.Data struct
+			if err := json.Unmarshal([]byte(marshalledString), &modified); err != nil {
+				m.logger.Error().Err(err).Msg("")
 			}
 
 			// Broadcast parsed log to buffers if there are multiple sinks (forwarders)

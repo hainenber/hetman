@@ -14,11 +14,11 @@ targets:
     modifier: 
       # Add some fields for testing
       add_fields:
-        added: "true"
-        modified: true
+        parsed.added: "true"
+        parsed.modified: true
       # Drop parsed "message" field
       drop_fields:
-        - message
+        - parsed.message
       # Replace parsed "password" field with 4 consecutive asterisks
       replace_fields:
         - path: "parsed.password"
