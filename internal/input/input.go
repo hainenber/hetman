@@ -109,7 +109,8 @@ func (i *Input) Run() {
 				// But newly created files, if matched with configured glob paths,
 				// must initiate new log workflow (tailing -> shipping)
 				// We need to get the last read position of old file
-				// "Create" part of a File Rename event will always start first, before "Rename" part
+				// On MacOS, "Create" part of a File Rename event will always start first, before "Rename" part
+				// TODO: Recognize File Rename event in MacOS-hosted container environment
 				if event.Has(fsnotify.Create) {
 					followedEvent := <-i.watcher.Events
 					if followedEvent.Has(fsnotify.Rename) {
@@ -118,15 +119,16 @@ func (i *Input) Run() {
 							lastReadPosition, err := tailer.Tailer.Tell()
 							if err != nil {
 								i.logger.Error().Err(err).Msg("")
-							}
-							i.InputChan <- RenameEvent{
-								Filepath:         event.Name,
-								LastReadPosition: lastReadPosition,
+							} else {
+								i.InputChan <- RenameEvent{
+									Filepath:         event.Name,
+									LastReadPosition: lastReadPosition,
+								}
 							}
 						}
 					} else {
 						// Only initiate new tailer if there isn't any existing tailer
-						// that follow this newly created file
+						// that is currently following this newly created file
 						tailer := i.getTailer(followedEvent.Name)
 						if tailer == nil {
 							i.InputChan <- RenameEvent{

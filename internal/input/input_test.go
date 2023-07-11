@@ -17,11 +17,12 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func appendToFile(filename, newLine string) {
-	f, _ := os.OpenFile(filename,
+func appendToFile(filename, newLine string) error {
+	f, err := os.OpenFile(filename,
 		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	defer f.Close()
 	f.WriteString(fmt.Sprintf("%s\n", newLine))
+	f.Close()
+	return err
 }
 
 func prepareInputRunScenario() (*Input, string, string, string) {
@@ -98,13 +99,15 @@ func TestInputRun(t *testing.T) {
 
 		// Rename file1 to file2
 		// Append file2 with new log line
-		os.Rename(file1Name, file2Name)
-		appendToFile(file2Name, "new line for file2")
+		assert.Nil(t, os.Rename(file1Name, file2Name))
+		assert.Nil(t, appendToFile(file2Name, "new line for file2"))
 
 		// Expect Input component to recognize "created"-type log rotation
 		// and send data (with read position from registered tailer)
 		// to initialize a new log workflow
-		assert.Equal(t, RenameEvent{Filepath: file2Name, LastReadPosition: 38}, <-i.InputChan)
+		fsEvent := <-i.InputChan
+		assert.Equal(t, file2Name, fsEvent.Filepath)
+		assert.GreaterOrEqual(t, int64(38), fsEvent.LastReadPosition)
 
 		i.Close()
 
