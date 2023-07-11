@@ -37,7 +37,10 @@ func (b *Backpressure) Run() {
 	for {
 		select {
 		case <-b.ctx.Done():
-			b.flush()
+			// Close tailer state channels to allow tailers to be closed cleanly
+			for _, stateChan := range b.stateChans {
+				close(stateChan)
+			}
 			return
 
 		case update, ok := <-b.UpdateChan:
@@ -46,7 +49,7 @@ func (b *Backpressure) Run() {
 			if !ok {
 				continue
 			}
-			// Compute tailer state, based on
+			// Compute tailer state, determined by given data size against current counter
 			stateToBroadcast := b.computeTailerState(update)
 
 			// Broadcast computed state to registered tailers
@@ -57,12 +60,6 @@ func (b *Backpressure) Run() {
 			// Set increment/decrement to current buffer's memory consumption from tailers and forwarders
 			atomic.StoreInt64(&b.current, atomic.AddInt64(&b.current, int64(update)))
 		}
-	}
-}
-
-func (b *Backpressure) flush() {
-	for update := range b.UpdateChan {
-		atomic.StoreInt64(&b.current, atomic.AddInt64(&b.current, int64(update)))
 	}
 }
 

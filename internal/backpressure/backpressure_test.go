@@ -41,25 +41,10 @@ func TestBackpressureRun(t *testing.T) {
 
 	bp.Close()
 
-	// Expect internal counter is updated from queuing updates
-	bp.UpdateChan <- 10
 	close(bp.UpdateChan)
 
 	wg.Wait()
-	assert.Equal(t, int64(11), bp.GetInternalCounter())
-}
-
-func TestBackpressureFlush(t *testing.T) {
-	bp := NewBackpressure(BackpressureOptions{
-		BackpressureMemoryLimit: 1,
-	})
-
-	bp.UpdateChan <- 10
-	close(bp.UpdateChan)
-
-	bp.flush()
-
-	assert.Equal(t, int64(10), bp.GetInternalCounter())
+	assert.Equal(t, int64(1), bp.GetInternalCounter())
 }
 
 func TestComputeTailerState(t *testing.T) {

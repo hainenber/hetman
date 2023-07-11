@@ -207,7 +207,6 @@ func (t *Tailer) Close() {
 
 	// Set tailer to closed state
 	t.state = state.Closed
-	t.StateChan <- state.Closed
 
 	t.cancelFunc()
 }

@@ -405,6 +405,13 @@ func (o *Orchestrator) Close() {
 	o.cancelFunc()
 	o.orchWg.Wait()
 
+	// Close encroaching backpressure engines
+	for _, bp := range o.backpressureEngines {
+		bp.Close()
+	}
+	o.logger.Info().Msg("Sent close signal to created backpressure engines")
+	o.backpressureWg.Wait()
+
 	// Close following components in order: input -> tailer -> buffer -> modifier -> parser -> forwarder
 	// Ensure all consumed log entries are flushed before closing
 	for _, i := range o.inputs {
@@ -442,15 +449,6 @@ func (o *Orchestrator) Close() {
 	}
 	o.logger.Info().Msg("Sent close signal to created forwarders")
 	o.forwarderWg.Wait()
-
-	for _, bp := range o.backpressureEngines {
-		// Close all backpressure's update channel
-		close(bp.UpdateChan)
-		bp.Close()
-	}
-	o.logger.Info().Msg("Sent close signal to created backpressure engines")
-	o.backpressureWg.Wait()
-
 }
 
 func (o *Orchestrator) PersistLastReadPositionForTailers() error {
