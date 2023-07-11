@@ -16,13 +16,11 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Scan for vulnerabilities in code
-        uses: Templum/govulncheck-action@v0.10.1
-        with: 
-          go-version: '1.20'
-          vulncheck-version: latest
-          package: ./...
-          fail-on-vuln: true
+      - id: govulncheck
+        uses: golang/govulncheck-action@v0.2.0
+        with:
+           go-version-input: '1.20.5'
+           go-package: ./...
 
       - name: Set up Go
         uses: actions/setup-go@v4
