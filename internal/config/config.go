@@ -18,9 +18,13 @@ import (
 )
 
 type GlobalConfig struct {
-	RegistryDir             string `koanf:"registry_directory"`
-	DiskBufferPersistence   bool   `koanf:"disk_buffer_persistence"`
-	BackpressureMemoryLimit int    `koanf:"backpressure_memory_limit"`
+	RegistryDir             string            `koanf:"registry_directory"`
+	DiskBuffer              DiskBufferSetting `koanf:"disk_buffer"`
+	BackpressureMemoryLimit int               `koanf:"backpressure_memory_limit"`
+}
+
+type DiskBufferSetting struct {
+	Size string `koanf:"size"`
 }
 
 type Config struct {

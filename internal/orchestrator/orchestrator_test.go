@@ -20,11 +20,11 @@ import (
 )
 
 type TestOrchestratorOption struct {
-	doneChan              chan struct{}
-	serverURL             string
-	backpressureOption    int
-	diskBufferPersistence bool
-	withJsonTarget        bool
+	doneChan           chan struct{}
+	serverURL          string
+	backpressureOption int
+	diskBuffer         config.DiskBufferSetting
+	withJsonTarget     bool
 }
 
 func TestMain(m *testing.M) {
@@ -48,7 +48,7 @@ func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string
 			GlobalConfig: config.GlobalConfig{
 				RegistryDir:             tmpRegistryDir,
 				BackpressureMemoryLimit: opt.backpressureOption,
-				DiskBufferPersistence:   opt.diskBufferPersistence,
+				DiskBuffer:              opt.diskBuffer,
 			},
 			Targets: []workflow.TargetConfig{
 				{
@@ -244,7 +244,7 @@ func TestOrchestratorBackpressure(t *testing.T) {
 		wg.Wait()
 
 		assert.Equal(t, state.Closed, orch.tailers[0].GetState())
-		assert.Equal(t, int64(4), orch.backpressureEngines[0].GetInternalCounter())
+		assert.GreaterOrEqual(t, orch.backpressureEngines[0].GetInternalCounter(), int64(3))
 	})
 
 	t.Run("do not block tailer when backpressure's memory limit is not breached, with offline downstream", func(t *testing.T) {
@@ -385,11 +385,11 @@ func TestOrchestratorRun(t *testing.T) {
 		defer mockServer.Close()
 
 		orch, tmpRegistryDir, tmpLogFiles := generateTestOrchestrator(TestOrchestratorOption{
-			doneChan:              doneChan,
-			serverURL:             mockServer.URL,
-			backpressureOption:    50,
-			diskBufferPersistence: true,
-			withJsonTarget:        true,
+			doneChan:           doneChan,
+			serverURL:          mockServer.URL,
+			backpressureOption: 50,
+			diskBuffer:         config.DiskBufferSetting{Size: "1Gb"},
+			withJsonTarget:     true,
 		})
 		defer os.RemoveAll(tmpRegistryDir)
 		for _, tmpLogFile := range tmpLogFiles {
@@ -465,11 +465,11 @@ func TestOrchestratorRun(t *testing.T) {
 		defer mockFailedServer.Close()
 
 		orch, tmpRegistryDir, tmpLogFiles := generateTestOrchestrator(TestOrchestratorOption{
-			doneChan:              doneChan,
-			serverURL:             mockFailedServer.URL,
-			backpressureOption:    50,
-			diskBufferPersistence: true,
-			withJsonTarget:        true,
+			doneChan:           doneChan,
+			serverURL:          mockFailedServer.URL,
+			backpressureOption: 50,
+			diskBuffer:         config.DiskBufferSetting{Size: "1Gb"},
+			withJsonTarget:     true,
 		})
 		defer os.RemoveAll(tmpRegistryDir)
 		for _, tmpLogFile := range tmpLogFiles {

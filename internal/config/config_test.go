@@ -24,6 +24,13 @@ func prepareTestConfig() (*Config, []string, string) {
 
 	globTmpDir := filepath.Join(tmpDir, "*.log")
 	conf := &Config{
+		GlobalConfig: GlobalConfig{
+			RegistryDir: "/tmp",
+			DiskBuffer: DiskBufferSetting{
+				Size: "1Gb",
+			},
+			BackpressureMemoryLimit: 100,
+		},
 		Targets: []workflow.TargetConfig{
 			{
 				Type: "file",
@@ -53,24 +60,19 @@ func cleanup(tmpDir string) {
 }
 
 func TestNewConfig(t *testing.T) {
-	conf, err := NewConfig("hetman.agent.yaml.example")
-	assert.Nil(t, err)
-	assert.NotNil(t, conf)
-	assert.Equal(t, 2, len(conf.Targets))
-	assert.Equal(t, "/tmp", conf.GlobalConfig.RegistryDir)
-
-	addedTags := conf.Targets[0].Forwarders[0].AddTags
-	expectedAddedTags := map[string]string{"label": "hetman", "source": "nginx", "dest": "loki"}
-
-	for k, v := range expectedAddedTags {
-		tag, ok := addedTags[k]
-		if !ok {
-			t.Errorf("expect existing %v:%v k-v, got none", k, v)
-		}
-		if tag != v {
-			t.Errorf("expect existing %v:%v k-v, got %v", k, v, tag)
-		}
-	}
+	t.Run("sane config", func(t *testing.T) {
+		conf, err := NewConfig("testdata/hetman.agent.yaml.sane")
+		assert.Nil(t, err)
+		assert.NotNil(t, conf)
+		assert.Equal(t, 2, len(conf.Targets))
+		assert.Equal(t, "/tmp", conf.GlobalConfig.RegistryDir)
+		assert.Equal(t, map[string]string{"label": "hetman", "source": "nginx", "dest": "loki"}, conf.Targets[0].Forwarders[0].AddTags)
+	})
+	t.Run("insane config, expect err", func(t *testing.T) {
+		conf, err := NewConfig("testdata/hetman.agent.yaml.insane")
+		assert.Nil(t, conf)
+		assert.NotNil(t, err)
+	})
 }
 
 func TestDetectDuplicateTargetID(t *testing.T) {
