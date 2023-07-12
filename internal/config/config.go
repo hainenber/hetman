@@ -54,6 +54,12 @@ func NewConfig(configPath string) (*Config, error) {
 		return nil, err
 	}
 
+	// Sanity config validation
+	// * Backpressure config shouldn't be 0
+	if config.GlobalConfig.BackpressureMemoryLimit == 0 {
+		return nil, fmt.Errorf("backpressure limit is set as 0, which would block the entire agent. Please reconfigure to non-zero value")
+	}
+
 	return &config, nil
 }
 

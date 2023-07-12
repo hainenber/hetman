@@ -1,0 +1,50 @@
+global:
+  registry_directory: /tmp
+  disk_buffer:
+    size: 1Gb
+  backpressure_memory_limit: 500
+
+targets:
+  - id: nginx
+    type: file
+    paths:
+      - testdata/nginx/nginx.log 
+      - testdata/nginx/*.log 
+    parser:
+      format: json
+    modifier: 
+      # Add some fields for testing
+      add_fields:
+        parsed.added: "true"
+        parsed.modified: true
+      # Drop parsed "message" field
+      drop_fields:
+        - parsed.message
+      # Replace parsed "password" field with 4 consecutive asterisks
+      replace_fields:
+        - path: "parsed.password"
+          pattern: ".*"
+          replacement: "****"
+    forwarders:
+      - type: loki
+        url: http://localhost:3100/loki/api/v1/push
+        add_tags:
+          label: hetman
+          source: nginx
+          dest: loki
+        compress_request: true 
+        probe_readiness: false
+        
+  - id: misc
+    type: file
+    paths:
+      - testdata/syslog/*.log
+      - testdata/nginx/*.log
+    forwarders:
+      - type: loki
+        url: http://localhost:3100/loki/api/v1/push
+        add_tags:
+          label: hetman
+          source: misc
+          dest: loki
+        compress_request: false 
