@@ -1,6 +1,3 @@
-# Dir containing data for testing
-testdata
-
 # Genuine configs
 hetman.agent.yaml
 hetman.aggregator.yaml
