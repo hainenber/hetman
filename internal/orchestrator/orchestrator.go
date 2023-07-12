@@ -337,11 +337,9 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 			})
 			fwdBuffer := buffer.NewBuffer(fwd.GetSignature())
 
-			// If enabled, read disk-persisted logs from prior saved file, if exists
-			if o.config.GlobalConfig.DiskBufferPersistence {
-				if bufferedPath, exists := o.registrar.BufferedPaths[fwdBuffer.GetSignature()]; exists {
-					ps.LoadPersistedLogs(bufferedPath)
-				}
+			// Read disk-persisted logs from prior saved file, if exists
+			if bufferedPath, exists := o.registrar.BufferedPaths[fwdBuffer.GetSignature()]; exists {
+				ps.LoadPersistedLogs(bufferedPath)
 			}
 
 			buffers = append(buffers, fwdBuffer)
@@ -473,20 +471,18 @@ func (o *Orchestrator) Cleanup() {
 	}
 	o.logger.Info().Msg("Finish saving last read positions")
 
-	// If enabled, persist undelivered, buffered logs to disk
+	// Persist undelivered, buffered logs to disk
 	// Map forwarder's signature with corresponding buffered filepath and save to local registry
-	if o.config.GlobalConfig.DiskBufferPersistence {
-		diskBufferedFilepaths := make(map[string]string, len(o.buffers))
-		for _, b := range o.buffers {
-			diskBufferedFilepath, err := b.PersistToDisk()
-			if err != nil {
-				o.logger.Error().Err(err).Msg("")
-			}
-			diskBufferedFilepaths[b.GetSignature()] = diskBufferedFilepath
-		}
-		if err := registry.SaveDiskBufferedFilePaths(o.registrar.GetRegistryDirPath(), diskBufferedFilepaths); err != nil {
+	diskBufferedFilepaths := make(map[string]string, len(o.buffers))
+	for _, b := range o.buffers {
+		diskBufferedFilepath, err := b.PersistToDisk()
+		if err != nil {
 			o.logger.Error().Err(err).Msg("")
 		}
+		diskBufferedFilepaths[b.GetSignature()] = diskBufferedFilepath
+	}
+	if err := registry.SaveDiskBufferedFilePaths(o.registrar.GetRegistryDirPath(), diskBufferedFilepaths); err != nil {
+		o.logger.Error().Err(err).Msg("")
 	}
 	o.logger.Info().Msg("Finish persisting buffered logs to disk")
 }
