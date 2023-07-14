@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/hainenber/hetman/internal/telemetry/metrics"
@@ -15,7 +14,6 @@ type Buffer struct {
 	cancelFunc context.CancelFunc // Context cancellation function
 	BufferChan chan pipeline.Data // Channel that store un-delivered logs, waiting to be either resend or persisted to disk
 	signature  string             // A buffer's signature, maded by hashing of forwarder's targets associative tag key-value pairs
-	ticker     *time.Ticker
 }
 
 func NewBuffer(signature string) *Buffer {
@@ -30,12 +28,10 @@ func NewBuffer(signature string) *Buffer {
 		BufferChan: make(chan pipeline.Data, 1024),
 		signature:  signature,
 		// TODO: Make this configurable by user input
-		ticker: time.NewTicker(500 * time.Millisecond),
 	}
 }
 
 func (b *Buffer) Run(fwdChan chan pipeline.Data) {
-	var lastLogTime time.Time
 	for {
 		select {
 		case <-b.ctx.Done():
@@ -48,18 +44,9 @@ func (b *Buffer) Run(fwdChan chan pipeline.Data) {
 			if !ok {
 				continue
 			}
-			// If received scraped logs from tailer,
-			// store tailed log line to forwarder's channel
-			fwdChan <- line
-			lastLogTime = time.Now()
 
-		case <-b.ticker.C:
-			// Send offset to forwarder's channel if the time since last log is longer
-			// than specific threshold
-			// TODO: Make this configurable
-			if time.Since(lastLogTime) > time.Duration(1*time.Second) {
-				fwdChan <- pipeline.Data{LogLine: b.signature}
-			}
+			// Send memory-stored event to forwarder's channel
+			fwdChan <- line
 		}
 	}
 }

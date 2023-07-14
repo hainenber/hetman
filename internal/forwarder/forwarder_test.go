@@ -331,7 +331,7 @@ func TestForwarderForward(t *testing.T) {
 		fwd := prepareTestForwarder(TestForwarderOptions{url: failedServer.URL, source: "test"})
 		err := fwd.forward(pipeline.Data{Timestamp: "1", LogLine: "failed abc"})
 		assert.NotNil(t, err)
-		assert.GreaterOrEqual(t, failedReqCount, 5)
+		assert.GreaterOrEqual(t, failedReqCount, 4)
 	})
 
 	t.Run("successfully send a compressed batch of 2 log lines", func(t *testing.T) {

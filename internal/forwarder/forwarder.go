@@ -39,6 +39,7 @@ type Forwarder struct {
 	LogChan    chan pipeline.Data // Channel to receive logs from buffer stage
 	logger     zerolog.Logger     // Dedicated logger
 	settings   ForwarderSettings  // Forwarder's settings
+	ticker     *time.Ticker
 }
 
 type ForwarderSettings struct {
@@ -78,13 +79,17 @@ func NewForwarder(settings ForwarderSettings) *Forwarder {
 		LogChan:    make(chan pipeline.Data, 1024),
 		logger:     zerolog.New(os.Stdout),
 		settings:   clonedForwarderSettings,
+		ticker:     time.NewTicker(500 * time.Millisecond),
 	}
 }
 
 // Run sends tailed or disk-buffered logs to remote endpoints.
 // Terminates once context is cancelled
 func (f *Forwarder) Run(bufferChan chan pipeline.Data, backpressureChan chan int) {
-	var batch []pipeline.Data
+	var (
+		batch       []pipeline.Data
+		lastLogTime time.Time
+	)
 	for {
 		select {
 
@@ -100,52 +105,60 @@ func (f *Forwarder) Run(bufferChan chan pipeline.Data, backpressureChan chan int
 		// Send buffered logs in batch
 		// If failed, will queue log(s) back to buffer channel for next persistence
 		case line, ok := <-f.LogChan:
-			if !ok || line.LogLine == f.settings.Signature {
+			if !ok {
 				continue
 			}
-			// In case received log isn't offset, set into batch
+
+			lastLogTime = time.Now()
+
+			// Send batched data if it reaches size limit
+			// Reset the batch once done
+			if len(batch) == DEFAULT_BATCH_SIZE {
+				f.wrappedForward(batch, bufferChan, backpressureChan)
+				// Restore batch array to zero length
+				batch = []pipeline.Data{}
+			}
 			batch = append(batch, line)
-			for i := 1; i < DEFAULT_BATCH_SIZE; i++ {
-				logLine, exists := <-f.LogChan
-				if !exists {
-					continue
-				}
-				if logLine.LogLine == f.settings.Signature {
-					break
-				}
-				batch = append(batch, logLine)
-			}
-			if err := f.forward(batch...); err != nil {
-				f.logger.Error().Err(err).Msg("")
-				// Queue batched log(s) back to buffer channel
-				for _, pipelineData := range batch {
-					bufferChan <- pipelineData
-				}
-			} else {
-				// Decrement global backpressure counter with number of bytes released from non-zero batch
-				// when successfully deliver log batch
-				batchedLogSize := lo.Reduce(batch, func(agg int, item pipeline.Data, _ int) int {
-					return agg + len(item.LogLine)
-				}, 0)
-				backpressureChan <- -batchedLogSize
-			}
 
-			// Submit metrics on successful forwarded logs
-			metrics.Meters.ForwardedLogCount.Add(f.ctx, int64(len(batch)))
-
-			// Restore batch array to zero length
-			batch = []pipeline.Data{}
+		case <-f.ticker.C:
+			// Send batched data to forwarder's channel if the time since last log is longer
+			// than specific threshold
+			// Reset the batch once done
+			if time.Since(lastLogTime) > time.Duration(1*time.Second) {
+				if len(batch) > 0 {
+					f.wrappedForward(batch, bufferChan, backpressureChan)
+					batch = []pipeline.Data{}
+				}
+			}
 		}
 	}
+}
+
+func (f *Forwarder) wrappedForward(batch []pipeline.Data, bufferChan chan pipeline.Data, backpressureChan chan int) {
+	err := f.forward(batch...)
+	if err != nil {
+		f.logger.Error().Err(err).Msgf("failed to forward batch of log to %v", f.settings.URL)
+		// Queue batched log(s) back to buffer channel
+		for _, pipelineData := range batch {
+			bufferChan <- pipelineData
+		}
+	} else {
+		// Decrement global backpressure counter with number of bytes released from non-zero batch
+		// when successfully deliver log batch
+		batchedLogSize := lo.Reduce(batch, func(agg int, item pipeline.Data, _ int) int {
+			return agg + len(item.LogLine)
+		}, 0)
+		backpressureChan <- -batchedLogSize
+	}
+
+	// Submit metrics on successful forwarded logs
+	metrics.Meters.ForwardedLogCount.Add(f.ctx, int64(len(batch)))
 }
 
 // Flush all consumed messages, forwarding to remote endpoints
 func (f *Forwarder) Flush(bufferChan chan pipeline.Data) []error {
 	var errors []error
 	for line := range f.LogChan {
-		if line.LogLine == f.settings.Signature {
-			continue
-		}
 		if err := f.forward(line); err != nil {
 			errors = append(errors, err)
 			bufferChan <- line

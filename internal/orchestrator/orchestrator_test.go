@@ -192,7 +192,7 @@ func TestProcessPathToForwarderMap(t *testing.T) {
 }
 
 func TestOrchestratorBackpressure(t *testing.T) {
-	t.Run("block tailer when backpressure's memory limit breached", func(t *testing.T) {
+	t.Run("block tailer when backpressure's memory limit is breached", func(t *testing.T) {
 		var (
 			wg               sync.WaitGroup
 			doneChan         = make(chan struct{}, 1)
