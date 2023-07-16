@@ -63,8 +63,28 @@ func NewConfig(configPath string) (*Config, error) {
 	if config.GlobalConfig.BackpressureMemoryLimit == 0 {
 		return nil, fmt.Errorf("backpressure limit is set as 0, which would block the entire agent. Please reconfigure to non-zero value")
 	}
+	// * `diskBuffer.Size` value is valid, i.e. "1KB, 2MB, 3GB"
+	if config.GlobalConfig.DiskBuffer != nil && config.GlobalConfig.DiskBuffer.Size != "" {
+		if err = checkDiskBufferSize(config.GlobalConfig.DiskBuffer.Size); err != nil {
+			return nil, err
+		}
+	}
 
 	return &config, nil
+}
+
+func checkDiskBufferSize(diskBufferSize string) error {
+	var valid bool
+	for _, validDiskBufferUnit := range []string{"KB", "MB", "GB"} {
+		if strings.HasSuffix(diskBufferSize, validDiskBufferUnit) {
+			valid = true
+		}
+	}
+	if valid {
+		return nil
+	} else {
+		return fmt.Errorf("invalid disk buffer size")
+	}
 }
 
 // DetectDuplicateTargetID ensures targets's ID are unique amongst them
