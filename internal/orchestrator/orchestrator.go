@@ -335,7 +335,11 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 				Signature:       fwdConf.CreateForwarderSignature(),
 				Source:          translatedPath,
 			})
-			fwdBuffer := buffer.NewBuffer(fwd.GetSignature())
+			fwdBuffer := buffer.NewBuffer(buffer.BufferOption{
+				Signature:         fwd.GetSignature(),
+				Logger:            o.logger,
+				DiskBufferSetting: *o.config.GlobalConfig.DiskBuffer,
+			})
 
 			// Read disk-persisted logs from prior saved file, if exists
 			if bufferedPath, exists := o.registrar.BufferedPaths[fwdBuffer.GetSignature()]; exists {
@@ -354,11 +358,30 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 			}()
 
 			// Start buffering logs
+			// Could be either memory-based or disk-based
 			o.bufferWg.Add(1)
 			go func() {
 				defer o.bufferWg.Done()
 				fwdBuffer.Run(fwd.LogChan)
 			}()
+			if o.config.GlobalConfig.DiskBuffer.Enabled {
+				o.bufferWg.Add(3)
+				go func() {
+					defer o.bufferWg.Done()
+					fwdBuffer.BufferSegmentToDiskLoop()
+				}()
+				go func() {
+					defer o.bufferWg.Done()
+					fwdBuffer.LoadSegmentToForwarderLoop(fwd.LogChan)
+					// Last sender to forwarder's channel
+					// Close it off once done
+					close(fwd.LogChan)
+				}()
+				go func() {
+					defer o.bufferWg.Done()
+					fwdBuffer.DeleteUsedSegmentFileLoop()
+				}()
+			}
 		}
 
 		// Start tailing files (for "file"-type target)
