@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/hainenber/hetman/internal/buffer"
+	"github.com/hainenber/hetman/internal/config"
 	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/hainenber/hetman/internal/telemetry/metrics"
 	"github.com/rs/zerolog"
@@ -117,7 +118,10 @@ func TestParserRun_HappyPaths(t *testing.T) {
 }
 
 func TestLoadPersistedLogs(t *testing.T) {
-	b := buffer.NewBuffer("abc")
+	b := buffer.NewBuffer(buffer.BufferOption{
+		Signature:         "abc",
+		DiskBufferSetting: config.DiskBufferSetting{},
+	})
 	b.BufferChan <- pipeline.Data{LogLine: "123"}
 
 	ps := NewParser(ParserOptions{
