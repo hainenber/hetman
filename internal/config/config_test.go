@@ -26,8 +26,8 @@ func prepareTestConfig() (*Config, []string, string) {
 	conf := &Config{
 		GlobalConfig: GlobalConfig{
 			RegistryDir: "/tmp",
-			DiskBuffer: DiskBufferSetting{
-				Size: "1Gb",
+			DiskBuffer: &DiskBufferSetting{
+				Size: "1GB",
 			},
 			BackpressureMemoryLimit: 100,
 		},
