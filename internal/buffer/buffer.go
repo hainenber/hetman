@@ -2,40 +2,84 @@ package buffer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"time"
 
+	"github.com/hainenber/hetman/internal/config"
 	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/hainenber/hetman/internal/telemetry/metrics"
+	"github.com/rs/zerolog"
 )
 
 type Buffer struct {
 	ctx        context.Context    // Context for forwarder struct, primarily for cancellation when needed
 	cancelFunc context.CancelFunc // Context cancellation function
-	BufferChan chan pipeline.Data // Channel that store un-delivered logs, waiting to be either resend or persisted to disk
 	signature  string             // A buffer's signature, maded by hashing of forwarder's targets associative tag key-value pairs
+	logger     zerolog.Logger     // Internal logger
+	ticker     *time.Ticker
+
+	diskBufferSetting config.DiskBufferSetting // Setting for disk queue
+	diskBufferDirPath string
+
+	BufferChan              chan pipeline.Data // In-memory channel that store un-delivered logs, waiting to be either resend or persisted to disk
+	batchedDataToBufferChan chan []pipeline.Data
+	segmentToLoadChan       chan string
+	deletedSegmentChan      chan string
 }
 
-func NewBuffer(signature string) *Buffer {
+type BufferOption struct {
+	Signature         string
+	Logger            zerolog.Logger
+	DiskBufferSetting config.DiskBufferSetting
+}
+
+func NewBuffer(opt BufferOption) *Buffer {
+	// Create temp dir to contain segment files for disk-buffered logs
+	// TODO: Integrate `diskBufferSetting.Path` as data dir to store buffered events
+	diskBufferDirPath := filepath.Join("/tmp", opt.Signature)
+	if opt.DiskBufferSetting.Enabled {
+		if _, err := os.Stat(diskBufferDirPath); os.IsNotExist(err) {
+			if err = os.Mkdir(diskBufferDirPath, 0744); err != nil {
+				return nil
+			}
+		}
+	}
+
 	ctx, cancelFunc := context.WithCancel(context.Background())
 
 	// Submit metrics on newly initialized buffer
 	metrics.Meters.InitializedComponents["buffer"].Add(ctx, 1)
 
 	return &Buffer{
-		ctx:        ctx,
-		cancelFunc: cancelFunc,
-		BufferChan: make(chan pipeline.Data, 1024),
-		signature:  signature,
-		// TODO: Make this configurable by user input
+		ctx:                     ctx,
+		cancelFunc:              cancelFunc,
+		signature:               opt.Signature,
+		logger:                  opt.Logger,
+		diskBufferSetting:       opt.DiskBufferSetting,
+		ticker:                  time.NewTicker(500 * time.Millisecond),
+		BufferChan:              make(chan pipeline.Data, 1024),
+		batchedDataToBufferChan: make(chan []pipeline.Data, 1024),
+		segmentToLoadChan:       make(chan string, 1024),
+		deletedSegmentChan:      make(chan string, 1024),
+		diskBufferDirPath:       diskBufferDirPath,
 	}
 }
 
 func (b *Buffer) Run(fwdChan chan pipeline.Data) {
+	var (
+		batch       []pipeline.Data
+		lastLogTime time.Time
+	)
 	for {
 		select {
 		case <-b.ctx.Done():
-			close(fwdChan)
+			if !b.diskBufferSetting.Enabled {
+				close(fwdChan)
+			}
+			close(b.batchedDataToBufferChan)
 			return
 
 		case line, ok := <-b.BufferChan:
@@ -45,8 +89,35 @@ func (b *Buffer) Run(fwdChan chan pipeline.Data) {
 				continue
 			}
 
-			// Send memory-stored event to forwarder's channel
-			fwdChan <- line
+			// Batching events
+			if len(batch) == 20 {
+				if b.diskBufferSetting.Enabled {
+					b.batchedDataToBufferChan <- batch
+				} else {
+					// Send memory-stored event to forwarder's channel
+					for _, event := range batch {
+						fwdChan <- event
+					}
+				}
+				batch = []pipeline.Data{}
+			}
+
+			batch = append(batch, line)
+			lastLogTime = time.Now()
+
+		case <-b.ticker.C:
+			if time.Since(lastLogTime) > time.Duration(1*time.Second) {
+				if b.diskBufferSetting.Enabled {
+					if len(batch) > 0 {
+						b.batchedDataToBufferChan <- batch
+					}
+				} else {
+					for _, event := range batch {
+						fwdChan <- event
+					}
+				}
+				batch = []pipeline.Data{}
+			}
 		}
 	}
 }
@@ -63,19 +134,72 @@ func (b Buffer) GetSignature() string {
 	return b.signature
 }
 
-// PersistToDisk writes buffered logs to temp file
-// Only to be called during shutdown
-func (b Buffer) PersistToDisk() (string, error) {
-	var (
-		bufferedFilename string
-	)
+// BufferLogsToDisk ...
+func (b Buffer) BufferSegmentToDiskLoop() {
+	// Inner goroutine loop to create segment files
+	for batchedData := range b.batchedDataToBufferChan {
+		// Create temp files to contain disk-buffered, persisted logs
+		bufferedFile, err := os.CreateTemp(b.diskBufferDirPath, "")
+		if err != nil {
+			b.logger.Error().Err(err).Msg("")
+			continue
+		}
 
+		// Write processed log(s) to files
+		if err := json.NewEncoder(bufferedFile).Encode(batchedData); err != nil {
+			b.logger.Error().Err(err).Msg("")
+			continue
+		}
+		b.segmentToLoadChan <- bufferedFile.Name()
+	}
+	close(b.segmentToLoadChan)
+}
+
+func (b Buffer) LoadSegmentToForwarderLoop(fwdChan chan pipeline.Data) {
+	// Inner goroutine loop to load processed data from segment files
+	for segmentFile := range b.segmentToLoadChan {
+		var batch []pipeline.Data
+		// Read from segment file
+		segmentFileContent, err := os.ReadFile(segmentFile)
+		if err != nil {
+			b.logger.Error().Err(err).Msg("")
+			continue
+		}
+		// Unmarshal
+		if json.Unmarshal(segmentFileContent, &batch); err != nil {
+			b.logger.Error().Err(err).Msg("")
+			continue
+		}
+		// Send to forwarder's channel
+		for _, event := range batch {
+			fwdChan <- event
+		}
+
+		// Send segment filename to deletion channel
+		b.deletedSegmentChan <- segmentFile
+	}
+	close(b.deletedSegmentChan)
+}
+
+func (b Buffer) DeleteUsedSegmentFileLoop() {
+	// Inner goroutine loop to delete loaded segment files
+	for segmentFile := range b.deletedSegmentChan {
+		// Delete loaded segment file
+		if err := os.Remove(segmentFile); err != nil {
+			b.logger.Error().Err(err).Msg("")
+			continue
+		}
+	}
+}
+
+// PersistToDisk writes buffered logs to temp file
+func (b Buffer) PersistToDisk() (string, error) {
 	// Create temp file to contain disk-buffered, persisted logs
 	bufferedFile, err := os.CreateTemp("", b.signature)
 	if err != nil {
 		return "", err
 	}
-	bufferedFilename = bufferedFile.Name()
+	bufferedFilename := bufferedFile.Name()
 
 	f, err := os.OpenFile(bufferedFilename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
