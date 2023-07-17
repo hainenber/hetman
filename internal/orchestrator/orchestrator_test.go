@@ -509,7 +509,6 @@ func TestOrchestratorRun(t *testing.T) {
 		// Since downstream is offline, expect registry file to contain last read position
 		// and the buffered file containing all scraped logs
 		// Only applicable for agent-mode orchestrator, it should be empty for aggregator-mode one
-		// TODO: Fix issue of buffered paths overwritten in wildcard-containing target
 		assert.Equal(t, int64(4), registryContent.Offsets[tmpLogFiles[0].Name()])
 		assert.Equal(t, int64(4), registryContent.Offsets[tmpLogFiles[1].Name()])
 		for _, buf := range orch.buffers {
@@ -520,10 +519,12 @@ func TestOrchestratorRun(t *testing.T) {
 			switch forwarderSourceAndSignatureMapping[bufferSignature] {
 			case "aggregator":
 				assert.Equal(t, "", string(logBufferedFile))
-				// case tmpLogFiles[0].Name(), tmpLogFiles[1].Name():
-				// 	assert.Equal(t, "a\nb\n", string(logBufferedFile))
-				// case tmpLogFiles[1].Name():
-				// 	assert.Equal(t, "c\nd\n", string(logBufferedFile))
+			case tmpLogFiles[0].Name():
+				assert.Equal(t, "a\nb\n", string(logBufferedFile))
+			case tmpLogFiles[1].Name():
+				assert.Equal(t, "c\nd\n", string(logBufferedFile))
+			case tmpLogFiles[2].Name():
+				assert.Equal(t, "{\"a\":\"b\"}\n", string(logBufferedFile))
 			}
 		}
 	})

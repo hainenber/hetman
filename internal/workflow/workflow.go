@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"crypto/md5"
 	"fmt"
 	"sort"
 	"strings"
@@ -47,7 +48,7 @@ type Workflow struct {
 }
 
 // CreateForwarderSignature generates signature for a forwarder by hashing its configuration values along with ordered tag key-values
-func (conf *ForwarderConfig) CreateForwarderSignature() string {
+func (conf *ForwarderConfig) CreateForwarderSignature(logSourcePath string) string {
 	var (
 		tagKeys      []string
 		tagValues    []string
@@ -63,10 +64,12 @@ func (conf *ForwarderConfig) CreateForwarderSignature() string {
 	sort.Strings(tagValues)
 
 	fwdConfParts = append(fwdConfParts, conf.URL)
+	fwdConfParts = append(fwdConfParts, logSourcePath)
 	fwdConfParts = append(fwdConfParts, tagKeys...)
 	fwdConfParts = append(fwdConfParts, tagValues...)
 
-	return fmt.Sprintf("%x",
-		[]byte(strings.Join(fwdConfParts, "")),
+	signature := fmt.Sprintf("%x",
+		md5.Sum([]byte(strings.Join(fwdConfParts, ""))),
 	)
+	return signature
 }
