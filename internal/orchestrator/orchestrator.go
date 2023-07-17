@@ -135,7 +135,7 @@ func processPathToForwarderMap(inputToForwarderMap InputToForwarderMap) (InputTo
 
 	for translatedPath, workflowOpts := range result {
 		result[translatedPath].forwarderConfigs = lo.UniqBy(workflowOpts.forwarderConfigs, func(fc workflow.ForwarderConfig) string {
-			return fc.CreateForwarderSignature()
+			return fc.CreateForwarderSignature(translatedPath)
 		})
 	}
 
@@ -332,7 +332,7 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 				URL:             fwdConf.URL,
 				AddTags:         fwdConf.AddTags,
 				CompressRequest: fwdConf.CompressRequest,
-				Signature:       fwdConf.CreateForwarderSignature(),
+				Signature:       fwdConf.CreateForwarderSignature(translatedPath),
 				Source:          translatedPath,
 			})
 			fwdBuffer := buffer.NewBuffer(buffer.BufferOption{
@@ -501,6 +501,7 @@ func (o *Orchestrator) Cleanup() {
 		diskBufferedFilepath, err := b.PersistToDisk()
 		if err != nil {
 			o.logger.Error().Err(err).Msg("")
+			continue
 		}
 		diskBufferedFilepaths[b.GetSignature()] = diskBufferedFilepath
 	}

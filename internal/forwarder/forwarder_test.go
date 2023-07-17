@@ -43,7 +43,7 @@ func prepareTestForwarder(opts TestForwarderOptions) *Forwarder {
 	return NewForwarder(ForwarderSettings{
 		URL:       fwdCfg.URL,
 		AddTags:   fwdCfg.AddTags,
-		Signature: fwdCfg.CreateForwarderSignature(),
+		Signature: fwdCfg.CreateForwarderSignature("foobar"),
 		Source:    opts.source,
 	})
 }
@@ -76,7 +76,7 @@ func TestGetLogSource(t *testing.T) {
 func TestGetSignature(t *testing.T) {
 	fwd := prepareTestForwarder(TestForwarderOptions{})
 	assert.NotNil(t, fwd)
-	assert.Equal(t, "687474703a2f2f6c6f63616c686f73743a38303838666f6f626172", fwd.GetSignature())
+	assert.Equal(t, "c95150e93cbfa1b67d1b86c9ddea05c2", fwd.GetSignature())
 }
 
 func TestForwarderRun(t *testing.T) {
