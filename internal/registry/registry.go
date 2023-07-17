@@ -12,8 +12,8 @@ const (
 )
 
 type Registry struct {
-	Offsets       map[string]int64
-	BufferedPaths map[string]string
+	Offsets       map[string]int64  `json:"offsets"`
+	BufferedPaths map[string]string `json:"bufferedPaths"`
 	regPath       string
 }
 
