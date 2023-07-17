@@ -362,7 +362,7 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 			o.bufferWg.Add(1)
 			go func() {
 				defer o.bufferWg.Done()
-				fwdBuffer.Run(fwd.LogChan)
+				fwdBuffer.Run(fwd.ForwarderChan)
 			}()
 			if o.config.GlobalConfig.DiskBuffer.Enabled {
 				o.bufferWg.Add(3)
@@ -372,10 +372,10 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 				}()
 				go func() {
 					defer o.bufferWg.Done()
-					fwdBuffer.LoadSegmentToForwarderLoop(fwd.LogChan)
+					fwdBuffer.LoadSegmentToForwarderLoop(fwd.ForwarderChan)
 					// Last sender to forwarder's channel
 					// Close it off once done
-					close(fwd.LogChan)
+					close(fwd.ForwarderChan)
 				}()
 				go func() {
 					defer o.bufferWg.Done()

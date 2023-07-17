@@ -94,9 +94,9 @@ func TestForwarderRun(t *testing.T) {
 			// Ensure "source" from tailed file is being sent properly
 			assert.Equal(t, "test", payload.Streams[0].Stream["source"])
 
-			for i := range make([]bool, 2) {
-				assert.Contains(t, payload.Streams[i].Values[0][1], fmt.Sprint(i))
-			}
+			// Ensure batched events are contained in payload
+			assert.Contains(t, payload.Streams[0].Values[0][1], "0")
+			assert.Contains(t, payload.Streams[1].Values[0][1], "1")
 			defer fwd.Close()
 		})
 		defer server.Close()
@@ -105,9 +105,11 @@ func TestForwarderRun(t *testing.T) {
 		bufferChan := make(chan pipeline.Data, 1)
 		backpressureChan := make(chan int, 1)
 
-		fwd.LogChan <- pipeline.Data{LogLine: "0"}
-		fwd.LogChan <- pipeline.Data{LogLine: "1"}
-		close(fwd.LogChan)
+		fwd.ForwarderChan <- []pipeline.Data{
+			{LogLine: "0"},
+			{LogLine: "1"},
+		}
+		close(fwd.ForwarderChan)
 
 		wg.Add(1)
 		go func() {
@@ -162,10 +164,13 @@ func TestForwarderRun(t *testing.T) {
 		bufferChan := make(chan pipeline.Data, 1)
 		backpressureChan := make(chan int, 2)
 
-		for i := 0; i < 100; i++ {
-			fwd.LogChan <- pipeline.Data{LogLine: fmt.Sprint(i)}
-		}
-		close(fwd.LogChan)
+		fwd.ForwarderChan <- lo.Map(make([]string, 50), func(item string, index int) pipeline.Data {
+			return pipeline.Data{LogLine: fmt.Sprint(index)}
+		})
+		fwd.ForwarderChan <- lo.Map(make([]string, 50), func(item string, index int) pipeline.Data {
+			return pipeline.Data{LogLine: fmt.Sprint(index + 50)}
+		})
+		close(fwd.ForwarderChan)
 
 		wg.Add(1)
 		go func() {
@@ -207,9 +212,9 @@ func TestForwarderFlush(t *testing.T) {
 	bufferChan := make(chan pipeline.Data, 1)
 
 	go func() {
-		fwd.LogChan <- pipeline.Data{LogLine: "success"}
-		fwd.LogChan <- pipeline.Data{LogLine: "failed"}
-		close(fwd.LogChan)
+		fwd.ForwarderChan <- []pipeline.Data{{LogLine: "success"}}
+		fwd.ForwarderChan <- []pipeline.Data{{LogLine: "failed"}}
+		close(fwd.ForwarderChan)
 	}()
 
 	errors := fwd.Flush(bufferChan)

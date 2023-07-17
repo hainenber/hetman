@@ -466,6 +466,8 @@ func TestOrchestratorRun(t *testing.T) {
 			reqCount++
 			if reqCount == 1 {
 				assert.True(t, orch.DoneInstantiated)
+			}
+			if reqCount == 3 {
 				doneChan <- struct{}{}
 			}
 			w.WriteHeader(http.StatusInternalServerError)

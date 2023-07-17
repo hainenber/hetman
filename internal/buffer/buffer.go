@@ -69,7 +69,7 @@ func NewBuffer(opt BufferOption) *Buffer {
 	}
 }
 
-func (b *Buffer) Run(fwdChan chan pipeline.Data) {
+func (b *Buffer) Run(fwdChan chan []pipeline.Data) {
 	var (
 		batch       []pipeline.Data
 		lastLogTime time.Time
@@ -96,9 +96,7 @@ func (b *Buffer) Run(fwdChan chan pipeline.Data) {
 					b.batchedDataToBufferChan <- batch
 				} else {
 					// Send memory-stored event to forwarder's channel
-					for _, event := range batch {
-						fwdChan <- event
-					}
+					fwdChan <- batch
 				}
 				batch = []pipeline.Data{}
 			}
@@ -113,9 +111,7 @@ func (b *Buffer) Run(fwdChan chan pipeline.Data) {
 						b.batchedDataToBufferChan <- batch
 					}
 				} else {
-					for _, event := range batch {
-						fwdChan <- event
-					}
+					fwdChan <- batch
 				}
 				batch = []pipeline.Data{}
 			}
@@ -156,7 +152,7 @@ func (b Buffer) BufferSegmentToDiskLoop() {
 	close(b.segmentToLoadChan)
 }
 
-func (b Buffer) LoadSegmentToForwarderLoop(fwdChan chan pipeline.Data) {
+func (b Buffer) LoadSegmentToForwarderLoop(fwdChan chan []pipeline.Data) {
 	// Inner goroutine loop to load processed data from segment files
 	for segmentFile := range b.segmentToLoadChan {
 		var batch []pipeline.Data
@@ -172,9 +168,7 @@ func (b Buffer) LoadSegmentToForwarderLoop(fwdChan chan pipeline.Data) {
 			continue
 		}
 		// Send to forwarder's channel
-		for _, event := range batch {
-			fwdChan <- event
-		}
+		fwdChan <- batch
 
 		// Send segment filename to deletion channel
 		b.deletedSegmentChan <- segmentFile

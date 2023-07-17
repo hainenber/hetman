@@ -49,7 +49,7 @@ func TestBufferRun(t *testing.T) {
 				Signature:         "abc",
 				DiskBufferSetting: config.DiskBufferSetting{},
 			})
-			fwdChan = make(chan pipeline.Data)
+			fwdChan = make(chan []pipeline.Data)
 		)
 
 		for i := 0; i < 20; i++ {
@@ -63,18 +63,21 @@ func TestBufferRun(t *testing.T) {
 		}()
 
 		// Test if buffer managed to send events if batched events reached threshold
-		for i := 0; i < 20; i++ {
-			forwarded := <-fwdChan
-			assert.Equal(t, pipeline.Data{LogLine: fmt.Sprintf("%v", i)}, forwarded)
-		}
+		assert.Equal(t,
+			lo.Map(make([]pipeline.Data, 20), func(item pipeline.Data, index int) pipeline.Data {
+				return pipeline.Data{LogLine: fmt.Sprintf("%v", index)}
+			}),
+			<-fwdChan)
 
 		// Test if buffer managed to send events on schedule in case batched events haven't reached limit yet
 		b.BufferChan <- pipeline.Data{LogLine: "on schedule0"}
 		b.BufferChan <- pipeline.Data{LogLine: "on schedule1"}
-		for i := 0; i < 2; i++ {
-			forwardedOnSchedule := <-fwdChan
-			assert.Equal(t, pipeline.Data{LogLine: fmt.Sprintf("on schedule%v", i)}, forwardedOnSchedule)
-		}
+		forwardedOnSchedule := <-fwdChan
+		assert.Equal(t, []pipeline.Data{
+			{LogLine: "on schedule0"},
+			{LogLine: "on schedule1"},
+		},
+			forwardedOnSchedule)
 
 		b.Close()
 		wg.Wait()
@@ -88,7 +91,7 @@ func TestBufferRun(t *testing.T) {
 					Enabled: true,
 				},
 			})
-			fwdChan = make(chan pipeline.Data)
+			fwdChan = make(chan []pipeline.Data)
 		)
 
 		for i := 0; i < 20; i++ {
@@ -166,7 +169,7 @@ func TestLoadSegmentToForwarderLoop(t *testing.T) {
 			Signature:         "abc",
 			DiskBufferSetting: config.DiskBufferSetting{},
 		})
-		fwdChan = make(chan pipeline.Data)
+		fwdChan = make(chan []pipeline.Data)
 	)
 
 	tmpSegmentFile, _ := os.CreateTemp("", "")
@@ -180,8 +183,10 @@ func TestLoadSegmentToForwarderLoop(t *testing.T) {
 
 	go b.LoadSegmentToForwarderLoop(fwdChan)
 
-	assert.Equal(t, pipeline.Data{LogLine: "foo", Parsed: map[string]string{"a": "b"}}, <-fwdChan)
-	assert.Equal(t, pipeline.Data{LogLine: "bar", Parsed: map[string]string{"c": "d"}}, <-fwdChan)
+	assert.Equal(t, []pipeline.Data{
+		{LogLine: "foo", Parsed: map[string]string{"a": "b"}},
+		{LogLine: "bar", Parsed: map[string]string{"c": "d"}},
+	}, <-fwdChan)
 	assert.Equal(t, tmpSegmentFile.Name(), <-b.deletedSegmentChan)
 	assert.FileExists(t, tmpSegmentFile.Name())
 

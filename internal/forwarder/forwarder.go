@@ -32,14 +32,13 @@ type Payload struct {
 }
 
 type Forwarder struct {
-	backoff    *backoff.ExponentialBackOff
-	ctx        context.Context    // Context for forwarder struct, primarily for cancellation when needed
-	cancelFunc context.CancelFunc // Context cancellation function
-	httpClient *http.Client       // Forwarder's reusable HTTP client
-	LogChan    chan pipeline.Data // Channel to receive logs from buffer stage
-	logger     zerolog.Logger     // Dedicated logger
-	settings   ForwarderSettings  // Forwarder's settings
-	ticker     *time.Ticker
+	backoff       *backoff.ExponentialBackOff
+	ctx           context.Context      // Context for forwarder struct, primarily for cancellation when needed
+	cancelFunc    context.CancelFunc   // Context cancellation function
+	httpClient    *http.Client         // Forwarder's reusable HTTP client
+	ForwarderChan chan []pipeline.Data // Channel to receive logs from buffer stage
+	logger        zerolog.Logger       // Dedicated logger
+	settings      ForwarderSettings    // Forwarder's settings
 }
 
 type ForwarderSettings struct {
@@ -72,24 +71,19 @@ func NewForwarder(settings ForwarderSettings) *Forwarder {
 	metrics.Meters.InitializedComponents["forwarder"].Add(ctx, 1)
 
 	return &Forwarder{
-		backoff:    backoffConfig,
-		ctx:        ctx,
-		cancelFunc: cancelFunc,
-		httpClient: &http.Client{},
-		LogChan:    make(chan pipeline.Data, 1024),
-		logger:     zerolog.New(os.Stdout),
-		settings:   clonedForwarderSettings,
-		ticker:     time.NewTicker(500 * time.Millisecond),
+		backoff:       backoffConfig,
+		ctx:           ctx,
+		cancelFunc:    cancelFunc,
+		httpClient:    &http.Client{},
+		ForwarderChan: make(chan []pipeline.Data, 1024),
+		logger:        zerolog.New(os.Stdout),
+		settings:      clonedForwarderSettings,
 	}
 }
 
 // Run sends tailed or disk-buffered logs to remote endpoints.
 // Terminates once context is cancelled
 func (f *Forwarder) Run(bufferChan chan pipeline.Data, backpressureChan chan int) {
-	var (
-		batch       []pipeline.Data
-		lastLogTime time.Time
-	)
 	for {
 		select {
 
@@ -104,64 +98,41 @@ func (f *Forwarder) Run(bufferChan chan pipeline.Data, backpressureChan chan int
 
 		// Send buffered logs in batch
 		// If failed, will queue log(s) back to buffer channel for next persistence
-		case line, ok := <-f.LogChan:
+		case batch, ok := <-f.ForwarderChan:
 			if !ok {
 				continue
 			}
-
-			lastLogTime = time.Now()
-
-			// Send batched data if it reaches size limit
-			// Reset the batch once done
-			if len(batch) == DEFAULT_BATCH_SIZE {
-				f.wrappedForward(batch, bufferChan, backpressureChan)
-				// Restore batch array to zero length
-				batch = []pipeline.Data{}
-			}
-			batch = append(batch, line)
-
-		case <-f.ticker.C:
-			// Send batched data to forwarder's channel if the time since last log is longer
-			// than specific threshold
-			// Reset the batch once done
-			if time.Since(lastLogTime) > time.Duration(1*time.Second) {
-				if len(batch) > 0 {
-					f.wrappedForward(batch, bufferChan, backpressureChan)
-					batch = []pipeline.Data{}
+			err := f.forward(batch...)
+			if err != nil {
+				f.logger.Error().Err(err).Msgf("failed to forward batch of log to %v", f.settings.URL)
+				// Queue batched log(s) back to buffer channel
+				for _, pipelineData := range batch {
+					bufferChan <- pipelineData
 				}
+			} else {
+				// Decrement global backpressure counter with number of bytes released from non-zero batch
+				// when successfully deliver log batch
+				batchedLogSize := lo.Reduce(batch, func(agg int, item pipeline.Data, _ int) int {
+					return agg + len(item.LogLine)
+				}, 0)
+				backpressureChan <- -batchedLogSize
 			}
+
+			// Submit metrics on successful forwarded logs
+			metrics.Meters.ForwardedLogCount.Add(f.ctx, int64(len(batch)))
 		}
 	}
-}
-
-func (f *Forwarder) wrappedForward(batch []pipeline.Data, bufferChan chan pipeline.Data, backpressureChan chan int) {
-	err := f.forward(batch...)
-	if err != nil {
-		f.logger.Error().Err(err).Msgf("failed to forward batch of log to %v", f.settings.URL)
-		// Queue batched log(s) back to buffer channel
-		for _, pipelineData := range batch {
-			bufferChan <- pipelineData
-		}
-	} else {
-		// Decrement global backpressure counter with number of bytes released from non-zero batch
-		// when successfully deliver log batch
-		batchedLogSize := lo.Reduce(batch, func(agg int, item pipeline.Data, _ int) int {
-			return agg + len(item.LogLine)
-		}, 0)
-		backpressureChan <- -batchedLogSize
-	}
-
-	// Submit metrics on successful forwarded logs
-	metrics.Meters.ForwardedLogCount.Add(f.ctx, int64(len(batch)))
 }
 
 // Flush all consumed messages, forwarding to remote endpoints
 func (f *Forwarder) Flush(bufferChan chan pipeline.Data) []error {
 	var errors []error
-	for line := range f.LogChan {
-		if err := f.forward(line); err != nil {
+	for batch := range f.ForwarderChan {
+		if err := f.forward(batch...); err != nil {
 			errors = append(errors, err)
-			bufferChan <- line
+			for _, line := range batch {
+				bufferChan <- line
+			}
 		}
 	}
 
