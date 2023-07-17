@@ -67,6 +67,9 @@ func TestNewConfig(t *testing.T) {
 		assert.Equal(t, 2, len(conf.Targets))
 		assert.Equal(t, "/tmp", conf.GlobalConfig.RegistryDir)
 		assert.Equal(t, map[string]string{"label": "hetman", "source": "nginx", "dest": "loki"}, conf.Targets[0].Forwarders[0].AddTags)
+
+		buildPath, _ := os.Executable()
+		assert.Equal(t, filepath.Join(filepath.Dir(buildPath), "diskbuffer"), conf.GlobalConfig.DiskBuffer.Path)
 	})
 	t.Run("insane config, expect err", func(t *testing.T) {
 		conf, err := NewConfig("testdata/hetman.agent.yaml.insane")

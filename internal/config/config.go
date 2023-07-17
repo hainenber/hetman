@@ -72,6 +72,16 @@ func NewConfig(configPath string) (*Config, error) {
 		}
 	}
 
+	// Sane defaults calibration
+	// * `diskBuffer.Path` value is configured to "/path/to/built/binary/diskbuffer"
+	if config.GlobalConfig.DiskBuffer != nil && config.GlobalConfig.DiskBuffer.Path == "" {
+		binaryPath, err := os.Executable()
+		if err != nil {
+			return nil, err
+		}
+		config.GlobalConfig.DiskBuffer.Path = filepath.Join(filepath.Dir(binaryPath), "diskbuffer")
+	}
+
 	return &config, nil
 }
 

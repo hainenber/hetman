@@ -22,10 +22,13 @@ func TestMain(m *testing.M) {
 }
 
 func TestNewBuffer(t *testing.T) {
+	tmpDir, _ := os.MkdirTemp("", "")
+	defer os.RemoveAll(tmpDir)
 	b := NewBuffer(BufferOption{
 		Signature: "abc",
 		DiskBufferSetting: config.DiskBufferSetting{
 			Enabled: true,
+			Path:    tmpDir,
 		},
 	})
 	assert.NotNil(t, b)
@@ -34,7 +37,7 @@ func TestNewBuffer(t *testing.T) {
 	assert.NotNil(t, b.ctx)
 	assert.NotNil(t, b.signature)
 	assert.Equal(t, 1024, cap(b.BufferChan))
-	assert.DirExists(t, filepath.Join("/tmp", b.signature))
+	assert.DirExists(t, filepath.Join(tmpDir, b.signature))
 }
 
 func TestBufferRun(t *testing.T) {

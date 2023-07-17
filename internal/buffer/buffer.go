@@ -38,11 +38,12 @@ type BufferOption struct {
 
 func NewBuffer(opt BufferOption) *Buffer {
 	// Create temp dir to contain segment files for disk-buffered logs
-	// TODO: Integrate `diskBufferSetting.Path` as data dir to store buffered events
-	diskBufferDirPath := filepath.Join("/tmp", opt.Signature)
+	diskBufferDirPath := filepath.Join(opt.DiskBufferSetting.Path, opt.Signature)
 	if opt.DiskBufferSetting.Enabled {
 		if _, err := os.Stat(diskBufferDirPath); os.IsNotExist(err) {
+			opt.Logger.Info().Err(err).Msgf("%s doesn't exist. Creating one", diskBufferDirPath)
 			if err = os.Mkdir(diskBufferDirPath, 0744); err != nil {
+				opt.Logger.Error().Err(err).Msgf("failed creating directory %v to contain disk-buffered events", diskBufferDirPath)
 				return nil
 			}
 		}

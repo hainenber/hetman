@@ -383,11 +383,14 @@ func TestOrchestratorRun(t *testing.T) {
 		mockServer := httptest.NewServer(mux)
 		defer mockServer.Close()
 
+		tmpDir, _ := os.MkdirTemp("", "")
+		defer os.RemoveAll(tmpDir)
+
 		orch, tmpRegistryDir, tmpLogFiles := generateTestOrchestrator(TestOrchestratorOption{
 			doneChan:           doneChan,
 			serverURL:          mockServer.URL,
 			backpressureOption: 50,
-			diskBuffer:         config.DiskBufferSetting{Size: "1GB", Enabled: true},
+			diskBuffer:         config.DiskBufferSetting{Size: "1GB", Enabled: true, Path: tmpDir},
 			withJsonTarget:     true,
 		})
 		defer os.RemoveAll(tmpRegistryDir)
@@ -408,7 +411,6 @@ func TestOrchestratorRun(t *testing.T) {
 				assert.True(t, orch.DoneInstantiated)
 			}
 
-			t.Log(len(sourceLabels))
 			if len(sourceLabels) == 3 && !doneChanSent {
 				doneChan <- struct{}{}
 				doneChanSent = true
@@ -438,7 +440,7 @@ func TestOrchestratorRun(t *testing.T) {
 		// Different options for buffering events shouldn't have any impact on whole workflow
 		// outside of capable of storing larger amount of events
 		for _, b := range orch.buffers {
-			assert.DirExists(t, filepath.Join("/tmp", b.GetSignature()))
+			assert.DirExists(t, filepath.Join(tmpDir, b.GetSignature()))
 		}
 
 		// Since downstream is online, expect registry file to contain last read position
