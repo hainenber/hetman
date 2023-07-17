@@ -125,13 +125,18 @@ func TestBufferRun(t *testing.T) {
 }
 
 func TestBufferSegmentToDiskLoop(t *testing.T) {
-	var (
-		b = NewBuffer(BufferOption{
-			Signature:         "abc",
-			DiskBufferSetting: config.DiskBufferSetting{},
-		})
-		batchedData = []pipeline.Data{}
-	)
+	batchedData := []pipeline.Data{}
+	tmpSegmentDir, _ := os.MkdirTemp("", "")
+	defer os.RemoveAll(tmpSegmentDir)
+
+	b := NewBuffer(BufferOption{
+		Signature: "abc",
+		DiskBufferSetting: config.DiskBufferSetting{
+			Enabled: true,
+			Path:    tmpSegmentDir,
+		},
+	})
+
 	b.batchedDataToBufferChan <- []pipeline.Data{
 		{LogLine: "foo", Parsed: map[string]string{"a": "b"}},
 		{LogLine: "bar", Parsed: map[string]string{"c": "d"}},
