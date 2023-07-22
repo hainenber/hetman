@@ -42,7 +42,7 @@ func NewBuffer(opt BufferOption) *Buffer {
 	if opt.DiskBufferSetting.Enabled {
 		if _, err := os.Stat(diskBufferDirPath); os.IsNotExist(err) {
 			opt.Logger.Error().Err(err).Msgf("%s doesn't exist. Creating one", diskBufferDirPath)
-			if err = os.Mkdir(diskBufferDirPath, 0744); err != nil {
+			if err = os.MkdirAll(diskBufferDirPath, 0744); err != nil {
 				opt.Logger.Error().Err(err).Msgf("failed creating directory %v to contain disk-buffered events", diskBufferDirPath)
 				return nil
 			}
