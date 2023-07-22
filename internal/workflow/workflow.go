@@ -28,7 +28,12 @@ type ForwarderConfig struct {
 }
 
 type ParserConfig struct {
-	Format  string `koanf:"format"`
+	Format    string          `koanf:"format"`
+	Pattern   string          `koanf:"pattern"`
+	Multiline MultilineConfig `koanf:"multiline"`
+}
+
+type MultilineConfig struct {
 	Pattern string `koanf:"pattern"`
 }
 
