@@ -2,6 +2,7 @@ package parser
 
 import (
 	"os"
+	"strings"
 	"sync"
 	"testing"
 
@@ -53,6 +54,37 @@ func generateParserParsingTestCase(t assert.TestingT, opt TestParserOption) {
 	}()
 
 	wg.Wait()
+}
+
+func TestNewParser(t *testing.T) {
+	t.Run("valid parser option", func(t *testing.T) {
+		ps := NewParser(ParserOptions{
+			Format:           "nginx",
+			Pattern:          "",
+			Logger:           zerolog.Nop(),
+			MultilinePattern: "\\b",
+		})
+		assert.NotNil(t, ps)
+	})
+	t.Run("invalid parser option", func(t *testing.T) {
+		for _, invalidParserOpt := range []ParserOptions{
+			{
+				Format:           "nginx",
+				Pattern:          "",
+				Logger:           zerolog.Nop(),
+				MultilinePattern: `\K`,
+			},
+			{
+				Format:           "arg",
+				Pattern:          "",
+				Logger:           zerolog.Nop(),
+				MultilinePattern: `\\b`,
+			},
+		} {
+			ps := NewParser(invalidParserOpt)
+			assert.Nil(t, ps)
+		}
+	})
 }
 
 func TestParserRun_HappyPaths(t *testing.T) {
@@ -114,6 +146,64 @@ func TestParserRun_HappyPaths(t *testing.T) {
 				"tag":      "su",
 			},
 		})
+	})
+	t.Run("successfully parse and process multi-line string", func(t *testing.T) {
+		var (
+			modifierChan   = make(chan pipeline.Data)
+			wg             sync.WaitGroup
+			javaStackTrace = `2023-07-21 08:22:43.784+0000 [id=146]   INFO    h.r.SynchronousCommandTransport$ReaderThread#run: I/O error in channel jenkins-agent-for-golang-0000axictwwg0
+java.net.SocketException: Socket closed
+        at java.base/sun.nio.ch.NioSocketImpl.endRead(NioSocketImpl.java:248)
+        at java.base/sun.nio.ch.NioSocketImpl.implRead(NioSocketImpl.java:327)
+		at java.base/sun.nio.ch.NioSocketImpl.read(NioSocketImpl.java:350)
+		at java.base/sun.nio.ch.NioSocketImpl$1.read(NioSocketImpl.java:803)
+		at java.base/java.net.Socket$SocketInputStream.read(Socket.java:966)
+		at io.jenkins.docker.client.DockerMultiplexedInputStream.readInternal(DockerMultiplexedInputStream.java:62)
+		at io.jenkins.docker.client.DockerMultiplexedInputStream.read(DockerMultiplexedInputStream.java:32)
+		at hudson.remoting.FlightRecorderInputStream.read(FlightRecorderInputStream.java:94)
+		at hudson.remoting.ChunkedInputStream.readHeader(ChunkedInputStream.java:74)
+		at hudson.remoting.ChunkedInputStream.readUntilBreak(ChunkedInputStream.java:105)
+		at hudson.remoting.ChunkedCommandTransport.readBlock(ChunkedCommandTransport.java:39)
+		at hudson.remoting.AbstractSynchronousByteArrayCommandTransport.read(AbstractSynchronousByteArrayCommandTransport.java:34)
+		at hudson.remoting.SynchronousCommandTransport$ReaderThread.run(SynchronousCommandTransport.java:61)
+2023-07-21 08:22:43.795+0000 [id=149]   INFO    i.j.docker.DockerTransientNode$1#println: Removed Node for node 'jenkins-agent-for-golang-0000axictwwg0'.`
+		)
+
+		ps := NewParser(ParserOptions{
+			Logger:           zerolog.Nop(),
+			Format:           "json",
+			MultilinePattern: "^[[:space:]]",
+		})
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			javaStackTraceLines := strings.Split(javaStackTrace, "\n")
+			for _, line := range javaStackTraceLines {
+				ps.ParserChan <- pipeline.Data{LogLine: line}
+			}
+			ps.ParserChan <- pipeline.Data{LogLine: `{"a":"b"}`}
+			ps.ParserChan <- pipeline.Data{LogLine: `{"c":"d"}`}
+			assert.Equal(t, javaStackTraceLines[0], (<-modifierChan).LogLine)
+			assert.Equal(t, strings.Join(javaStackTraceLines[1:len(javaStackTraceLines)-1], " "), (<-modifierChan).LogLine)
+			assert.Equal(t, javaStackTraceLines[len(javaStackTraceLines)-1], (<-modifierChan).LogLine)
+			assert.Equal(t, map[string]string{"a": "b"}, (<-modifierChan).Parsed)
+			ps.Close()
+		}()
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ps.Run(modifierChan)
+		}()
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ps.ProcessMultilineLogLoop(modifierChan)
+		}()
+
+		wg.Wait()
 	})
 }
 

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"os"
+	"regexp"
 
 	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/hainenber/hetman/internal/telemetry/metrics"
@@ -19,56 +20,133 @@ type Parser struct {
 	cancelFunc context.CancelFunc
 	ctx        context.Context
 
-	format      string
-	pattern     string
-	logger      zerolog.Logger
-	nginxParser *gonx.Parser
-	jsonParser  fastjson.Parser
+	format           string
+	pattern          string
+	logger           zerolog.Logger
+	nginxParser      *gonx.Parser
+	jsonParser       fastjson.Parser
+	multilinePattern *regexp.Regexp
 
-	ParserChan chan pipeline.Data
+	ParserChan       chan pipeline.Data
+	multilineLogChan chan pipeline.Data
 }
 
 type ParserOptions struct {
-	Pattern string
-	Format  string
-	Logger  zerolog.Logger
+	Pattern          string
+	Format           string
+	Logger           zerolog.Logger
+	MultilinePattern string
 }
 
+const (
+	nginxFormat   = "nginx"
+	jsonFormat    = "json"
+	syslogRFC5424 = "syslog-rfc5424"
+	syslogRFC3164 = "syslog-rfc3164"
+)
+
 func NewParser(opts ParserOptions) *Parser {
+	var (
+		multilinePattern *regexp.Regexp
+		err              error
+	)
+	if opts.MultilinePattern != "" {
+		multilinePattern, err = regexp.Compile(opts.MultilinePattern)
+		if err != nil {
+			opts.Logger.Error().Err(err).Msg("failed to compile multi-line regex pattern")
+			return nil
+		}
+	}
+
 	ctx, cancelFunc := context.WithCancel(context.Background())
 
-	metrics.Meters.InitializedComponents["parser"].Add(ctx, 1)
-
 	parser := &Parser{
-		cancelFunc: cancelFunc,
-		ctx:        ctx,
-		format:     opts.Format,
-		pattern:    opts.Pattern,
-		logger:     opts.Logger,
-		ParserChan: make(chan pipeline.Data, 1024),
+		cancelFunc:       cancelFunc,
+		ctx:              ctx,
+		format:           opts.Format,
+		pattern:          opts.Pattern,
+		logger:           opts.Logger,
+		ParserChan:       make(chan pipeline.Data, 1024),
+		multilineLogChan: make(chan pipeline.Data),
+		multilinePattern: multilinePattern,
 	}
 
-	switch opts.Format {
-	case "nginx":
-		parser.nginxParser = gonx.NewParser(opts.Pattern)
-	case "json":
-		parser.jsonParser = fastjson.Parser{}
+	if opts.Format != "" {
+		switch opts.Format {
+		case nginxFormat:
+			parser.nginxParser = gonx.NewParser(opts.Pattern)
+		case jsonFormat:
+			parser.jsonParser = fastjson.Parser{}
+		case syslogRFC5424, syslogRFC3164:
+			break
+		default:
+			opts.Logger.Error().Msg("invalid parser format")
+			return nil
+		}
 	}
+
+	metrics.Meters.InitializedComponents["parser"].Add(ctx, 1)
 
 	return parser
 }
 
-func (p *Parser) Run(modifierChan chan pipeline.Data) {
+func (p *Parser) ProcessMultilineLogLoop(modifierChan chan pipeline.Data) {
+	var (
+		growingMultilineLog *pipeline.Data
+	)
+
 	for {
 		select {
 		case <-p.ctx.Done():
 			return
-		case data := <-p.ParserChan:
+		case data, ok := <-p.ParserChan:
+			if !ok {
+				continue
+			}
+			// Multiline processing
+			// Set non-multiline-pattern-matched string as anchor and try to match following
+			// 	events, append into originally anchored string
+			//  append to previous line matches with pattern, do not append into prevei
+			if p.multilinePattern != nil {
+				isMatched := p.multilinePattern.MatchString(data.LogLine)
+				if !isMatched {
+					// Send either recently finalized multi-line event or previously anchored event to Modifier stage
+					if growingMultilineLog != nil {
+						p.multilineLogChan <- *growingMultilineLog
+					}
+
+					// Set new anchor event
+					// TODO: Find a way to send adjacent events to Modifier stage without waiting for upcoming log entries
+					growingMultilineLog = &data
+				}
+				if isMatched && growingMultilineLog != nil {
+					growingMultilineLog.LogLine += " " + data.LogLine
+				}
+			}
+		}
+	}
+}
+
+func (p *Parser) Run(modifierChan chan pipeline.Data) {
+	previousStageChan := &p.ParserChan
+	if p.multilinePattern != nil {
+		previousStageChan = &p.multilineLogChan
+	}
+
+	for {
+		select {
+		case <-p.ctx.Done():
+			return
+		case data, ok := <-*previousStageChan:
+			if !ok {
+				continue
+			}
+
 			switch p.format {
-			case "nginx":
+			case nginxFormat:
 				parsed, err := p.nginxParser.ParseString(data.LogLine)
 				if err != nil {
-					p.logger.Error().Err(err).Msg("")
+					p.logger.Error().Err(err).Msg("cannot parse log into Nginx format")
 					break
 				}
 				if parsed == nil {
@@ -80,32 +158,33 @@ func (p *Parser) Run(modifierChan chan pipeline.Data) {
 					data.Parsed[k] = v
 				}
 
-			case "json":
+			case jsonFormat:
 				parsed, err := p.jsonParser.Parse(data.LogLine)
 				if err != nil {
-					p.logger.Error().Err(err).Msg("")
+					p.logger.Error().Err(err).Msg("cannot parse log into JSON format")
 					break
 				}
 				if parsed == nil {
-					p.logger.Error().Msg("Parsed JSON log is nil")
+					p.logger.Error().Msg("parsed JSON log is nil")
 					break
 				}
 				parsedJson, err := getKeyValuePairs(parsed)
 				if err != nil {
-					p.logger.Error().Err(err).Msg("Cannot parse JSON log further")
+					p.logger.Error().Err(err).Msg("cannot parse JSON log further")
 					break
 				}
 				data.Parsed = parsedJson
 
-			case "syslog-rfc5424", "syslog-rfc3164":
+			case syslogRFC5424, syslogRFC3164:
 				var syslogParser syslogparser.LogParser
-				if p.format == "syslog-rfc5424" {
+				if p.format == syslogRFC5424 {
 					syslogParser = rfc5424.NewParser([]byte(data.LogLine))
-				} else if p.format == "syslog-rfc3164" {
+				}
+				if p.format == syslogRFC3164 {
 					syslogParser = rfc3164.NewParser([]byte(data.LogLine))
 				}
 				if err := syslogParser.Parse(); err != nil {
-					p.logger.Error().Err(err).Msg("")
+					p.logger.Error().Err(err).Msg("cannot parse log into syslog-* format")
 					break
 				}
 				parsed := syslogParser.Dump()
@@ -115,6 +194,7 @@ func (p *Parser) Run(modifierChan chan pipeline.Data) {
 						data.Parsed[k] = strV
 					}
 				}
+
 			}
 
 			// Move parsed log to modifier stage in the pipeline for further processing
