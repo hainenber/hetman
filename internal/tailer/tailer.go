@@ -172,7 +172,7 @@ func (t *Tailer) waitForBackpressureResponse(lineSize int) bool {
 		if computedTailerState == state.Running || computedTailerState == state.Closed {
 			break
 		}
-		t.logger.Info().Msg("Getting blocked by backpressure engine")
+		t.logger.Debug().Msg("Getting blocked by backpressure engine")
 	}
 
 	// Skip to next iteration to catch context cancellation
