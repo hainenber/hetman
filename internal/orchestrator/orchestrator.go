@@ -311,9 +311,10 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 
 		// Each workflow has a single parser
 		ps := parser.NewParser(parser.ParserOptions{
-			Format:  workflowOpts.parserConfig.Format,
-			Pattern: workflowOpts.parserConfig.Pattern,
-			Logger:  o.logger,
+			Format:           workflowOpts.parserConfig.Format,
+			Pattern:          workflowOpts.parserConfig.Pattern,
+			MultilinePattern: workflowOpts.parserConfig.Multiline.Pattern,
+			Logger:           o.logger,
 		})
 
 		// Each workflow has a single modifier
@@ -404,6 +405,13 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 			defer o.parserWg.Done()
 			ps.Run(mod.ModifierChan)
 		}()
+		if workflowOpts.parserConfig.Multiline.Pattern != "" {
+			o.parserWg.Add(1)
+			go func() {
+				defer o.parserWg.Done()
+				ps.ProcessMultilineLogLoop(mod.ModifierChan)
+			}()
+		}
 
 		// Start modifying parsed logs
 		o.modifiers = append(o.modifiers, mod)
