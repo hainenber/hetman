@@ -80,8 +80,8 @@ func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string
 	}
 
 	if opt.withJsonTarget {
-		tmpLogFile3, _ := os.CreateTemp(tmpLogDir, "orchestrator-backpressure-file3-")
-		os.WriteFile(tmpLogFile3.Name(), []byte(`{"a":"b"}`), 0777)
+		tmpLogFile3, _ := os.CreateTemp("", "orchestrator-backpressure-file3-")
+		os.WriteFile(tmpLogFile3.Name(), []byte(`{"a":"b","c":"secretive"}`), 0777)
 		orchOption.Config.Targets = append(orchOption.Config.Targets, workflow.TargetConfig{
 			Id: "agent2",
 			Paths: []string{
@@ -109,8 +109,8 @@ func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string
 	}
 
 	if opt.withMultilineTarget {
-		tmpLogFile4, _ := os.CreateTemp(tmpLogDir, "orchestrator-backpressure-file4-")
-		os.WriteFile(tmpLogFile4.Name(), []byte("a\n b\n c\n"), 0777)
+		tmpLogFile4, _ := os.CreateTemp("", "orchestrator-backpressure-file4-")
+		os.WriteFile(tmpLogFile4.Name(), []byte("a\n  b\n  c\n"), 0777)
 		orchOption.Config.Targets = append(orchOption.Config.Targets, workflow.TargetConfig{
 			Id: "agent3",
 			Paths: []string{
@@ -328,7 +328,7 @@ func TestOrchestratorBackpressure(t *testing.T) {
 		wg.Wait()
 
 		assert.Equal(t, state.Closed, orch.tailers[0].GetState())
-		assert.Equal(t, int64(13), orch.backpressureEngines[0].GetInternalCounter())
+		assert.Equal(t, int64(29), orch.backpressureEngines[0].GetInternalCounter())
 	})
 
 	t.Run("do not block tailer when backpressure's memory limit is not breached, with online upstream", func(t *testing.T) {
@@ -389,12 +389,12 @@ func TestOrchestratorBackpressure(t *testing.T) {
 
 func TestOrchestratorRun(t *testing.T) {
 	t.Parallel()
+
 	t.Run("successfully run and cleanup, happy path", func(t *testing.T) {
 		var (
 			doneChan          = make(chan struct{})
-			doneChanSent      bool
+			once              sync.Once
 			wg                sync.WaitGroup
-			reqCount          int
 			orch              *Orchestrator
 			registryContent   registry.Registry
 			sourceLabels      = make(map[string]bool)
@@ -419,38 +419,38 @@ func TestOrchestratorRun(t *testing.T) {
 		defer tmpFileDeletionFunc()
 
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			reqCount++
 			payload := forwarder.Payload{}
 			json.NewDecoder(r.Body).Decode(&payload)
 
 			sourceLabelsMutex.Lock()
-			sourceLabels[payload.Streams[0].Stream["source"]] = true
+			defer sourceLabelsMutex.Unlock()
+			for _, stream := range payload.Streams {
+				if payloadSource, exist := stream.Stream["source"]; exist {
+					sourceLabels[payloadSource] = true
 
-			// TODO: Fix this flaky assertions and possibly revamp entire
-			// 	test suites for Orchestrator
-			// Expect payload for JSON-format logs to be modified accordingly
-			// if payloadSource == tmpLogFiles[2].Name() {
-			// 	assert.Equal(t, "bar", payload.Streams[0].Stream["a2"])
-			// 	assert.NotContains(t, payload.Streams[0].Stream, "b2")
-			// 	assert.Equal(t, "****", payload.Streams[0].Stream["password"])
-			// }
-
-			// // Expect payload to contain multi-line
-			// if payloadSource == tmpLogFiles[3].Name() {
-			// 	assert.Equal(t, "a b", payload.Streams[0].Values[0][0])
-			// }
-
-			// // Expect orchestrator has done spinning up all workflow components
-			// if reqCount == 1 {
-			// 	assert.True(t, orch.DoneInstantiated)
-			// }
-
-			if len(sourceLabels) == 3 && !doneChanSent {
-				doneChan <- struct{}{}
-				doneChanSent = true
+					// Expect payload for JSON-format logs to be modified accordingly
+					if payloadSource == tmpLogFiles[2].Name() {
+						assert.Equal(t, "true", stream.Stream["added"])
+						assert.NotContains(t, stream.Stream, "a")
+						assert.Equal(t, "****", stream.Stream["c"])
+					}
+					// Expect payload to contain multi-line
+					if payloadSource == tmpLogFiles[3].Name() {
+						assert.Equal(t, "a b", stream.Values[0][0])
+					}
+				}
 			}
 
-			sourceLabelsMutex.Unlock()
+			// Expect orchestrator has done spinning up all workflow components
+			if len(sourceLabels) == 1 {
+				assert.True(t, orch.DoneInstantiated)
+			}
+
+			if len(sourceLabels) >= 3 {
+				once.Do(func() {
+					doneChan <- struct{}{}
+				})
+			}
 		})
 
 		wg.Add(1)
@@ -489,21 +489,36 @@ func TestOrchestratorRun(t *testing.T) {
 
 	t.Run("successfully run and cleanup, sad path with offline downstream", func(t *testing.T) {
 		var (
-			doneChan        = make(chan struct{})
-			wg              sync.WaitGroup
-			reqCount        int
-			orch            *Orchestrator
-			registryContent registry.Registry
+			doneChan          = make(chan struct{})
+			wg                sync.WaitGroup
+			orch              *Orchestrator
+			registryContent   registry.Registry
+			sourceLabels      = make(map[string]bool)
+			sourceLabelsMutex sync.Mutex
+			once              sync.Once
 		)
 
 		mockFailedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			reqCount++
-			if reqCount == 1 {
+			payload := forwarder.Payload{}
+			json.NewDecoder(r.Body).Decode(&payload)
+
+			sourceLabelsMutex.Lock()
+			defer sourceLabelsMutex.Unlock()
+			for _, stream := range payload.Streams {
+				if payloadSource, exist := stream.Stream["source"]; exist {
+					sourceLabels[payloadSource] = true
+				}
+			}
+
+			if len(sourceLabels) == 1 {
 				assert.True(t, orch.DoneInstantiated)
 			}
-			if reqCount == 4 {
-				doneChan <- struct{}{}
+			if len(sourceLabels) >= 3 {
+				once.Do(func() {
+					doneChan <- struct{}{}
+				})
 			}
+
 			w.WriteHeader(http.StatusInternalServerError)
 		}))
 		defer mockFailedServer.Close()
@@ -555,7 +570,7 @@ func TestOrchestratorRun(t *testing.T) {
 			case tmpLogFiles[1].Name():
 				assert.Equal(t, "c\nd\n", string(logBufferedFile))
 			case tmpLogFiles[2].Name():
-				assert.Equal(t, "{\"a\":\"b\"}\n", string(logBufferedFile))
+				assert.Equal(t, "{\"a\":\"b\",\"c\":\"secretive\"}\n", string(logBufferedFile))
 			}
 		}
 	})
