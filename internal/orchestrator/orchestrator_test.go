@@ -33,7 +33,7 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string, []*os.File) {
+func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string, []*os.File, func()) {
 	tmpRegistryDir, _ := os.MkdirTemp("", "orchestrator-backpressure-dir-")
 	tmpLogDir, _ := os.MkdirTemp("", "")
 	tmpLogFile1, _ := os.CreateTemp(tmpLogDir, "orchestrator-backpressure-file1-")
@@ -133,7 +133,12 @@ func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string
 	}
 
 	orch := NewOrchestrator(orchOption)
-	return orch, tmpRegistryDir, tmpLogFiles
+	return orch, tmpRegistryDir, tmpLogFiles, func() {
+		os.RemoveAll(tmpRegistryDir)
+		for _, tmpLogFile := range tmpLogFiles {
+			os.Remove(tmpLogFile.Name())
+		}
+	}
 }
 
 func TestNewOrchestrator(t *testing.T) {
@@ -235,15 +240,12 @@ func TestOrchestratorBackpressure(t *testing.T) {
 
 		// Create and run a orchestrator with full workflow of tailer, buffer and forwarder
 		// Configure a small backpressure limit
-		orch, tmpRegistryDir, tmpLogFiles := generateTestOrchestrator(TestOrchestratorOption{
+		orch, _, _, tmpFileDeletionFunc := generateTestOrchestrator(TestOrchestratorOption{
 			doneChan:           doneChan,
 			serverURL:          failedServer.URL,
 			backpressureOption: 1,
 		})
-		defer os.RemoveAll(tmpRegistryDir)
-		for _, tmpLogFile := range tmpLogFiles {
-			defer os.Remove(tmpLogFile.Name())
-		}
+		defer tmpFileDeletionFunc()
 
 		assert.NotNil(t, orch)
 
@@ -293,16 +295,13 @@ func TestOrchestratorBackpressure(t *testing.T) {
 
 		// Create and run a orchestrator with full workflow of tailer, buffer and forwarder
 		// Configure a moderate backpressure limit
-		orch, tmpRegistryDir, tmpLogFiles := generateTestOrchestrator(TestOrchestratorOption{
+		orch, _, _, tmpFileDeletionFunc := generateTestOrchestrator(TestOrchestratorOption{
 			doneChan:           doneChan,
 			serverURL:          offlineServer.URL,
 			backpressureOption: 50,
 			withJsonTarget:     true,
 		})
-		defer os.RemoveAll(tmpRegistryDir)
-		for _, tmpLogFile := range tmpLogFiles {
-			defer os.Remove(tmpLogFile.Name())
-		}
+		defer tmpFileDeletionFunc()
 
 		assert.NotNil(t, orch)
 
@@ -357,16 +356,13 @@ func TestOrchestratorBackpressure(t *testing.T) {
 
 		// Create and run a orchestrator with full workflow of tailer, buffer and forwarder
 		// Configure a moderate backpressure limit
-		orch, tmpRegistryDir, tmpLogFiles := generateTestOrchestrator(TestOrchestratorOption{
+		orch, _, _, tmpFileDeletionFunc := generateTestOrchestrator(TestOrchestratorOption{
 			doneChan:           doneChan,
 			serverURL:          onlineServer.URL,
 			backpressureOption: 50,
 			withJsonTarget:     true,
 		})
-		defer os.RemoveAll(tmpRegistryDir)
-		for _, tmpLogFile := range tmpLogFiles {
-			defer os.Remove(tmpLogFile.Name())
-		}
+		defer tmpFileDeletionFunc()
 
 		assert.NotNil(t, orch)
 
@@ -412,7 +408,7 @@ func TestOrchestratorRun(t *testing.T) {
 		tmpDir, _ := os.MkdirTemp("", "")
 		defer os.RemoveAll(tmpDir)
 
-		orch, tmpRegistryDir, tmpLogFiles := generateTestOrchestrator(TestOrchestratorOption{
+		orch, tmpRegistryDir, tmpLogFiles, tmpFileDeletionFunc := generateTestOrchestrator(TestOrchestratorOption{
 			doneChan:            doneChan,
 			serverURL:           mockServer.URL,
 			backpressureOption:  50,
@@ -420,10 +416,7 @@ func TestOrchestratorRun(t *testing.T) {
 			withJsonTarget:      true,
 			withMultilineTarget: true,
 		})
-		defer os.RemoveAll(tmpRegistryDir)
-		for _, tmpLogFile := range tmpLogFiles {
-			defer os.Remove(tmpLogFile.Name())
-		}
+		defer tmpFileDeletionFunc()
 
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			reqCount++
@@ -515,17 +508,14 @@ func TestOrchestratorRun(t *testing.T) {
 		}))
 		defer mockFailedServer.Close()
 
-		orch, tmpRegistryDir, tmpLogFiles := generateTestOrchestrator(TestOrchestratorOption{
+		orch, tmpRegistryDir, tmpLogFiles, tmpFileDeletionFunc := generateTestOrchestrator(TestOrchestratorOption{
 			doneChan:           doneChan,
 			serverURL:          mockFailedServer.URL,
 			backpressureOption: 50,
 			diskBuffer:         config.DiskBufferSetting{},
 			withJsonTarget:     true,
 		})
-		defer os.RemoveAll(tmpRegistryDir)
-		for _, tmpLogFile := range tmpLogFiles {
-			defer os.Remove(tmpLogFile.Name())
-		}
+		defer tmpFileDeletionFunc()
 
 		wg.Add(1)
 		go func() {
