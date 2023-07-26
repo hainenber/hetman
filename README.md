@@ -14,9 +14,8 @@ At the moment, the agent only supports Loki as downstream log consumer
 * Deliver logs in batches.
 * Built-in backpressure engine to control input/output bandwidth  
 * High percentage of code coverage (>= 80% for the majority of components)
+* Capable to parse multi-line logs
 
 ## Roadmap
-- [ ] Allow configuration with VRL.
-- [ ] Ability to parse multi-line logs.
-- [ ] Support multiple downstreams aside from Loki.
 - [ ] Fleet management
+- [ ] Support multiple downstreams aside from Loki.
