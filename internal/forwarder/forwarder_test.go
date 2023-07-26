@@ -14,6 +14,7 @@ import (
 	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/hainenber/hetman/internal/telemetry/metrics"
 	"github.com/hainenber/hetman/internal/workflow"
+	"github.com/rs/zerolog"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 )
@@ -28,8 +29,10 @@ func generateMockForwarderDestination(handlerFunc func(w http.ResponseWriter, r 
 }
 
 type TestForwarderOptions struct {
-	url    string
-	source string
+	url             string
+	source          string
+	forwarderType   string
+	compressRequest bool
 }
 
 func prepareTestForwarder(opts TestForwarderOptions) *Forwarder {
@@ -37,14 +40,18 @@ func prepareTestForwarder(opts TestForwarderOptions) *Forwarder {
 		URL:     "http://localhost:8088",
 		AddTags: map[string]string{"foo": "bar"},
 	}
+	nopLogger := zerolog.Nop()
 	if opts.url != "" {
 		fwdCfg.URL = opts.url
 	}
 	return NewForwarder(ForwarderSettings{
-		URL:       fwdCfg.URL,
-		AddTags:   fwdCfg.AddTags,
-		Signature: fwdCfg.CreateForwarderSignature("foobar"),
-		Source:    opts.source,
+		Type:            opts.forwarderType,
+		URL:             fwdCfg.URL,
+		AddTags:         fwdCfg.AddTags,
+		Signature:       fwdCfg.CreateForwarderSignature("foobar"),
+		Source:          opts.source,
+		Logger:          &nopLogger,
+		CompressRequest: opts.compressRequest,
 	})
 }
 
@@ -52,29 +59,39 @@ func TestNewForwarder(t *testing.T) {
 	t.Parallel()
 	t.Run("create new forwarder with tailed filepath as additional 'source' tags", func(t *testing.T) {
 		fwd := prepareTestForwarder(TestForwarderOptions{
-			source: "/tmp/nginx/nginx1.log",
+			source:        "/tmp/nginx/nginx1.log",
+			forwarderType: "loki",
 		})
 		assert.NotNil(t, fwd)
 		assert.NotNil(t, fwd.settings)
 		assert.Equal(t, "/tmp/nginx/nginx1.log", fwd.settings.AddTags["source"])
 	})
 	t.Run("create new forwarder with no 'source' tag as additional tags", func(t *testing.T) {
-		fwd := prepareTestForwarder(TestForwarderOptions{})
+		fwd := prepareTestForwarder(TestForwarderOptions{
+			forwarderType: "loki",
+		})
 		assert.NotNil(t, fwd)
 		assert.NotNil(t, fwd.settings)
 		assert.NotContains(t, fwd.settings.AddTags, "source")
+	})
+	t.Run("no forwarder created if forwarder's type not configured", func(t *testing.T) {
+		fwd := prepareTestForwarder(TestForwarderOptions{})
+		assert.Nil(t, fwd)
 	})
 }
 
 func TestGetLogSource(t *testing.T) {
 	fwd := prepareTestForwarder(TestForwarderOptions{
-		source: "/tmp/nginx/nginx1.log",
+		source:        "/tmp/nginx/nginx1.log",
+		forwarderType: "loki",
 	})
 	assert.Equal(t, "/tmp/nginx/nginx1.log", fwd.GetLogSource())
 }
 
 func TestGetSignature(t *testing.T) {
-	fwd := prepareTestForwarder(TestForwarderOptions{})
+	fwd := prepareTestForwarder(TestForwarderOptions{
+		forwarderType: "loki",
+	})
 	assert.NotNil(t, fwd)
 	assert.Equal(t, "c95150e93cbfa1b67d1b86c9ddea05c2", fwd.GetSignature())
 }
@@ -101,7 +118,7 @@ func TestForwarderRun(t *testing.T) {
 		})
 		defer server.Close()
 
-		fwd = prepareTestForwarder(TestForwarderOptions{url: server.URL, source: "test"})
+		fwd = prepareTestForwarder(TestForwarderOptions{url: server.URL, source: "test", forwarderType: "loki"})
 		bufferChan := make(chan pipeline.Data, 1)
 		backpressureChan := make(chan int, 1)
 
@@ -160,7 +177,7 @@ func TestForwarderRun(t *testing.T) {
 			assert.Equal(t, 2, reqCount)
 		}()
 
-		fwd = prepareTestForwarder(TestForwarderOptions{url: server.URL, source: "test"})
+		fwd = prepareTestForwarder(TestForwarderOptions{url: server.URL, source: "test", forwarderType: "loki"})
 		bufferChan := make(chan pipeline.Data, 1)
 		backpressureChan := make(chan int, 2)
 
@@ -208,7 +225,7 @@ func TestForwarderFlush(t *testing.T) {
 	}))
 	defer server.Close()
 
-	fwd := prepareTestForwarder(TestForwarderOptions{url: server.URL})
+	fwd := prepareTestForwarder(TestForwarderOptions{url: server.URL, forwarderType: "loki"})
 	bufferChan := make(chan pipeline.Data, 1)
 
 	go func() {
@@ -305,7 +322,7 @@ func TestForwarderForward(t *testing.T) {
 	defer failedServer.Close()
 
 	t.Run("successfully forward 1 line of log", func(t *testing.T) {
-		fwd := prepareTestForwarder(TestForwarderOptions{url: server.URL, source: "test"})
+		fwd := prepareTestForwarder(TestForwarderOptions{url: server.URL, source: "test", forwarderType: "loki"})
 		err := fwd.forward(pipeline.Data{
 			Timestamp: "123",
 			LogLine:   "success abc",
@@ -321,7 +338,7 @@ func TestForwarderForward(t *testing.T) {
 	})
 
 	t.Run("sucessfully ship multiple lines of log", func(t *testing.T) {
-		fwd := prepareTestForwarder(TestForwarderOptions{url: server.URL, source: "test"})
+		fwd := prepareTestForwarder(TestForwarderOptions{url: server.URL, source: "test", forwarderType: "loki"})
 		parsed := map[string]string{"parsed_tag_1": "a", "parsed_tag_2": "b"}
 		logPayload := []pipeline.Data{
 			{Timestamp: "1", LogLine: "success def1", Parsed: parsed},
@@ -333,7 +350,7 @@ func TestForwarderForward(t *testing.T) {
 	})
 
 	t.Run("failed to forward 1 line of log", func(t *testing.T) {
-		fwd := prepareTestForwarder(TestForwarderOptions{url: failedServer.URL, source: "test"})
+		fwd := prepareTestForwarder(TestForwarderOptions{url: failedServer.URL, source: "test", forwarderType: "loki"})
 		err := fwd.forward(pipeline.Data{Timestamp: "1", LogLine: "failed abc"})
 		assert.NotNil(t, err)
 		assert.GreaterOrEqual(t, failedReqCount, 4)
@@ -369,8 +386,7 @@ func TestForwarderForward(t *testing.T) {
 				},
 			}, payload.Streams)
 		})
-		fwd := prepareTestForwarder(TestForwarderOptions{url: server.URL, source: "test"})
-		fwd.settings.CompressRequest = true
+		fwd := prepareTestForwarder(TestForwarderOptions{url: server.URL, source: "test", forwarderType: "loki", compressRequest: true})
 		err := fwd.forward(
 			pipeline.Data{Timestamp: "1", LogLine: "a"},
 			pipeline.Data{Timestamp: "2", LogLine: "b"},

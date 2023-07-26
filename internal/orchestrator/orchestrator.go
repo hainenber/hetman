@@ -333,6 +333,8 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 				URL:             fwdConf.URL,
 				AddTags:         fwdConf.AddTags,
 				CompressRequest: fwdConf.CompressRequest,
+				Logger:          &o.logger,
+				Type:            fwdConf.Type,
 				Signature:       fwdConf.CreateForwarderSignature(translatedPath),
 				Source:          translatedPath,
 			})

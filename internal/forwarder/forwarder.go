@@ -1,14 +1,8 @@
 package forwarder
 
 import (
-	"bytes"
-	"compress/gzip"
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
@@ -35,9 +29,9 @@ type Forwarder struct {
 	backoff       *backoff.ExponentialBackOff
 	ctx           context.Context      // Context for forwarder struct, primarily for cancellation when needed
 	cancelFunc    context.CancelFunc   // Context cancellation function
-	httpClient    *http.Client         // Forwarder's reusable HTTP client
 	ForwarderChan chan []pipeline.Data // Channel to receive logs from buffer stage
-	logger        zerolog.Logger       // Dedicated logger
+	Output        Output               // Implementation of forwarder that sends events to correct output
+	logger        *zerolog.Logger      // Dedicated logger
 	settings      ForwarderSettings    // Forwarder's settings
 }
 
@@ -46,16 +40,19 @@ type ForwarderSettings struct {
 	URL             string
 	AddTags         map[string]string
 	CompressRequest bool
-	Signature       string // Signature from hashing entire forwarder struct
-	Source          string // Source of tailed logs, will be sent to downstream as 1 of associative labels
+	Signature       string          // Signature from hashing entire forwarder struct
+	Source          string          // Source of tailed logs, will be sent to downstream as 1 of associative labels
+	Logger          *zerolog.Logger // Dedicated logger
+}
+
+type Output interface {
+	PreparePayload(...pipeline.Data) (func() error, error)
 }
 
 func NewForwarder(settings ForwarderSettings) *Forwarder {
 	// Deep copy forwarder settings to avoid contamination of "source" attribute
 	clonedForwarderSettings := settings
 	clonedForwarderSettings.AddTags = lo.Assign(settings.AddTags)
-
-	ctx, cancelFunc := context.WithCancel(context.Background())
 
 	// For each failed delivery, maximum elapsed time for exp backoff is 5 seconds
 	backoffConfig := backoff.NewExponentialBackOff()
@@ -67,6 +64,23 @@ func NewForwarder(settings ForwarderSettings) *Forwarder {
 		clonedForwarderSettings.AddTags["source"] = clonedForwarderSettings.Source
 	}
 
+	// Initialize inner forwarder based on user-inputted type
+	var forwarderOutput Output
+	switch settings.Type {
+	case "loki":
+		forwarderOutput = LokiOutput{
+			settings:   clonedForwarderSettings,
+			httpClient: &http.Client{},
+		}
+	default:
+		if settings.Logger != nil {
+			clonedForwarderSettings.Logger.Error().Msg("invalid forwarder type")
+		}
+		return nil
+	}
+
+	ctx, cancelFunc := context.WithCancel(context.Background())
+
 	// Submit metrics on newly initialized forwarder
 	metrics.Meters.InitializedComponents["forwarder"].Add(ctx, 1)
 
@@ -74,9 +88,9 @@ func NewForwarder(settings ForwarderSettings) *Forwarder {
 		backoff:       backoffConfig,
 		ctx:           ctx,
 		cancelFunc:    cancelFunc,
-		httpClient:    &http.Client{},
+		Output:        forwarderOutput,
 		ForwarderChan: make(chan []pipeline.Data, 1024),
-		logger:        zerolog.New(os.Stdout),
+		logger:        settings.Logger,
 		settings:      clonedForwarderSettings,
 	}
 }
@@ -152,75 +166,13 @@ func (f *Forwarder) Close() {
 	f.cancelFunc()
 }
 
-// TODO: Generalize this method to send logs to other downstream log consumers
-// Only support Loki atm
+// forward() is a generic way to send logs to other downstream log consumers
 func (f *Forwarder) forward(forwardArgs ...pipeline.Data) error {
-	// Setting up log payload
-	payload := make([]PayloadStream, len(forwardArgs))
-	for i, arg := range forwardArgs {
-		sentTime := arg.Timestamp
-		// Initialize timestamp in case it isn't present in args
-		if sentTime == "" {
-			sentTime = fmt.Sprint(time.Now().UnixNano())
-		}
-		payload[i] = PayloadStream{
-			Stream: lo.Assign(f.settings.AddTags, arg.Parsed, arg.Labels),
-			Values: [][]string{{sentTime, arg.LogLine}},
-		}
-	}
-
-	// Wrap sections of making HTTP request to downstream and process response
-	// to an inner function to apply exponential backoff
-	// TODO: Allow exponential backoff configurable via user's config
-	innerForwardFunc := func() error {
-		// Fetch tags from config
-		payload, err := json.Marshal(Payload{
-			Streams: payload,
-		})
-		if err != nil {
-			return err
-		}
-		bufferedPayload := bytes.NewBuffer(payload)
-
-		// If enabled, compress payload before sending
-		if f.settings.CompressRequest {
-			bufferedPayload = new(bytes.Buffer)
-			gzipWriter := gzip.NewWriter(bufferedPayload)
-			gzipWriter.Write(payload)
-			gzipWriter.Close()
-		}
-
-		// Initialize POST request to log servers
-		// Since we're sending data as JSON data, the header must be set as well
-		req, err := http.NewRequest(http.MethodPost, f.settings.URL, bufferedPayload)
-		if err != nil {
-			return err
-		}
-
-		// Set approriate header(s)
-		req.Header.Set("Content-Type", "application/json")
-		if f.settings.CompressRequest {
-			req.Header.Set("Content-Encoding", "gzip")
-		}
-
-		// Send the payload
-		resp, err := f.httpClient.Do(req)
-		if err == nil && resp.StatusCode >= 400 {
-			err = fmt.Errorf("unexpected status code from log server: %v", resp.StatusCode)
-		}
-
-		// Read response's body (if response is not nil) and close off for HTTP client conn reuse
-		if resp != nil && resp.Body != nil {
-			defer resp.Body.Close()
-			if _, bodyDiscardErr := io.Copy(io.Discard, resp.Body); bodyDiscardErr != nil {
-				err = bodyDiscardErr
-			}
-		}
-
+	innerForwarderFunc, err := f.Output.PreparePayload(forwardArgs...)
+	if err != nil {
 		return err
 	}
-
-	return backoff.Retry(innerForwardFunc, f.backoff)
+	return backoff.Retry(innerForwarderFunc, f.backoff)
 }
 
 func (f *Forwarder) GetSignature() string {
