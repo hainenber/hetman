@@ -69,13 +69,15 @@ type Workflow struct {
 
 // CreateForwarderSignature generates signature for a forwarder by hashing its configuration values along with ordered tag key-values
 func (conf *ForwarderConfig) CreateForwarderSignature(logSourcePath string) string {
-	var signature string
+	var (
+		signature    string
+		fwdConfParts []string
+	)
 
 	if conf.Loki != nil {
 		var (
-			tagKeys      []string
-			tagValues    []string
-			fwdConfParts []string
+			tagKeys   []string
+			tagValues []string
 		)
 
 		// Ensure tag key-value pairs are ordered
@@ -86,15 +88,19 @@ func (conf *ForwarderConfig) CreateForwarderSignature(logSourcePath string) stri
 		sort.Strings(tagKeys)
 		sort.Strings(tagValues)
 
-		fwdConfParts = append(fwdConfParts, conf.Loki.URL)
-		fwdConfParts = append(fwdConfParts, logSourcePath)
+		fwdConfParts = append(fwdConfParts, conf.Loki.URL, logSourcePath)
 		fwdConfParts = append(fwdConfParts, tagKeys...)
 		fwdConfParts = append(fwdConfParts, tagValues...)
-
-		signature = fmt.Sprintf("%x",
-			md5.Sum([]byte(strings.Join(fwdConfParts, ""))),
-		)
 	}
+
+	if conf.Kafka != nil {
+		fwdConfParts = append(fwdConfParts, conf.Kafka.Topic)
+		fwdConfParts = append(fwdConfParts, conf.Kafka.Brokers...)
+	}
+
+	signature = fmt.Sprintf("%x",
+		md5.Sum([]byte(strings.Join(fwdConfParts, ""))),
+	)
 
 	return signature
 }
