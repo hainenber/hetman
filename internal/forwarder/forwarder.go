@@ -47,6 +47,7 @@ type ForwarderSettings struct {
 
 type Output interface {
 	PreparePayload(...pipeline.Data) (func() error, error)
+	GetSettings() map[string]interface{}
 }
 
 func NewForwarder(settings ForwarderSettings) *Forwarder {

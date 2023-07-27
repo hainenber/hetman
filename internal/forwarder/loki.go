@@ -9,12 +9,14 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/fatih/structs"
 	"github.com/hainenber/hetman/internal/pipeline"
+	"github.com/hainenber/hetman/internal/workflow"
 	"github.com/samber/lo"
 )
 
 type LokiOutput struct {
-	settings   ForwarderSettings
+	settings   workflow.LokiForwarderConfig
 	httpClient *http.Client
 }
 
@@ -81,4 +83,8 @@ func (l LokiOutput) PreparePayload(forwardArgs ...pipeline.Data) (func() error, 
 	}
 
 	return innerForwarderFunc, nil
+}
+
+func (l LokiOutput) GetSettings() map[string]interface{} {
+	return structs.Map(l.settings)
 }

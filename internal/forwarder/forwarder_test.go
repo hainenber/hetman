@@ -64,7 +64,10 @@ func TestNewForwarder(t *testing.T) {
 		})
 		assert.NotNil(t, fwd)
 		assert.NotNil(t, fwd.settings)
-		assert.Equal(t, "/tmp/nginx/nginx1.log", fwd.settings.AddTags["source"])
+
+		fwdLokiSettings := fwd.Output.GetSettings()
+		addedTags := fwdLokiSettings["AddTags"].(map[string]string)
+		assert.Equal(t, "/tmp/nginx/nginx1.log", addedTags["source"])
 	})
 	t.Run("create new forwarder with no 'source' tag as additional tags", func(t *testing.T) {
 		fwd := prepareTestForwarder(TestForwarderOptions{
