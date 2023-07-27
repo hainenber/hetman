@@ -7,9 +7,10 @@ global:
 targets:
   - id: nginx
     type: file
-    paths:
-      - testdata/nginx/nginx.log 
-      - testdata/nginx/*.log 
+    input:
+      paths:
+        - testdata/nginx/nginx.log 
+        - testdata/nginx/*.log 
     parser:
       format: json
     modifier: 
@@ -26,25 +27,27 @@ targets:
           pattern: ".*"
           replacement: "****"
     forwarders:
-      - type: loki
-        url: http://localhost:3100/loki/api/v1/push
-        add_tags:
-          label: hetman
-          source: nginx
-          dest: loki
-        compress_request: true 
-        probe_readiness: false
+      - loki:
+          url: http://localhost:3100/loki/api/v1/push
+          add_tags:
+            label: hetman
+            source: nginx
+            dest: loki
+          compress_request: true 
+          probe_readiness: false
         
   - id: misc
     type: file
-    paths:
-      - testdata/syslog/*.log
-      - testdata/nginx/*.log
+    input:
+      paths:
+        - testdata/syslog/*.log
+        - testdata/nginx/*.log
     forwarders:
-      - type: loki
-        url: http://localhost:3100/loki/api/v1/push
-        add_tags:
-          label: hetman
-          source: misc
-          dest: loki
-        compress_request: false 
+      - loki:
+          url: http://localhost:3100/loki/api/v1/push
+          add_tags:
+            label: hetman
+            source: misc
+            dest: loki
+          compress_request: false 
+          

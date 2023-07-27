@@ -8,9 +8,10 @@ global:
 targets:
   - id: nginx
     type: file
-    paths:
-      - testdata/nginx/nginx.log 
-      - testdata/nginx/*.log 
+    input:
+      paths:
+        - testdata/nginx/nginx.log 
+        - testdata/nginx/*.log 
     parser:
       format: json
     modifier: 
@@ -38,9 +39,10 @@ targets:
         
   - id: misc
     type: file
-    paths:
-      - testdata/syslog/*.log
-      - testdata/nginx/*.log
+    input:
+      paths:
+        - testdata/syslog/*.log
+        - testdata/nginx/*.log
     forwarders:
       - loki:
           url: http://localhost:3100/loki/api/v1/push
@@ -48,4 +50,5 @@ targets:
             label: hetman
             source: misc
             dest: loki
-          compress_request: false 
+          compress_request: false
+          

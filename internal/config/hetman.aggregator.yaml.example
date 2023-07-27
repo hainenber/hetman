@@ -1,29 +1,33 @@
 global:
   registry_directory: /tmp
-  disk_buffer_persistence: true
-  backpressure_mem_limit: 500
+  disk_buffer:
+    size: 1Gb
+  backpressure_memory_limit: 500
 
 targets:
   - id: nginx
     parser:
       format: json
     forwarders:
-      - url: http://localhost:3100/loki/api/v1/push
-        add_tags:
-          label: hetman
-          source: nginx
-          dest: loki
-        compress_request: true 
-        probe_readiness: false
+      - loki:
+          url: http://localhost:3100/loki/api/v1/push
+          add_tags:
+            label: hetman
+            source: nginx
+            dest: loki
+          compress_request: true 
+          probe_readiness: false
 
   - id: misc
     paths:
       - testdata/syslog/*.log
       - testdata/nginx/*.log
     forwarders:
-      - url: http://localhost:3100/loki/api/v1/push
-        add_tags:
-          label: hetman
-          source: misc
-          dest: loki
-        compress_request: false 
+      - loki: 
+          url: http://localhost:3100/loki/api/v1/push
+          add_tags:
+            label: hetman
+            source: misc
+            dest: loki
+          compress_request: false 
+          
