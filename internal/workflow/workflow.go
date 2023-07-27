@@ -20,7 +20,16 @@ type ReplaceFieldSetting struct {
 }
 
 type ForwarderConfig struct {
-	Type            string            `koanf:"type"`
+	Loki  *LokiForwarderConfig  `koanf:"loki"`
+	Kafka *KafkaForwarderConfig `koanf:"kafka"`
+}
+
+type KafkaForwarderConfig struct {
+	Brokers []string `koanf:"brokers"`
+	Topic   string   `koanf:"topic"`
+}
+
+type LokiForwarderConfig struct {
 	URL             string            `koanf:"url"`
 	AddTags         map[string]string `koanf:"add_tags"`
 	CompressRequest bool              `koanf:"compress_request"`
@@ -54,27 +63,32 @@ type Workflow struct {
 
 // CreateForwarderSignature generates signature for a forwarder by hashing its configuration values along with ordered tag key-values
 func (conf *ForwarderConfig) CreateForwarderSignature(logSourcePath string) string {
-	var (
-		tagKeys      []string
-		tagValues    []string
-		fwdConfParts []string
-	)
+	var signature string
 
-	// Ensure tag key-value pairs are ordered
-	for k, v := range conf.AddTags {
-		tagKeys = append(tagKeys, k)
-		tagValues = append(tagValues, v)
+	if conf.Loki != nil {
+		var (
+			tagKeys      []string
+			tagValues    []string
+			fwdConfParts []string
+		)
+
+		// Ensure tag key-value pairs are ordered
+		for k, v := range conf.Loki.AddTags {
+			tagKeys = append(tagKeys, k)
+			tagValues = append(tagValues, v)
+		}
+		sort.Strings(tagKeys)
+		sort.Strings(tagValues)
+
+		fwdConfParts = append(fwdConfParts, conf.Loki.URL)
+		fwdConfParts = append(fwdConfParts, logSourcePath)
+		fwdConfParts = append(fwdConfParts, tagKeys...)
+		fwdConfParts = append(fwdConfParts, tagValues...)
+
+		signature = fmt.Sprintf("%x",
+			md5.Sum([]byte(strings.Join(fwdConfParts, ""))),
+		)
 	}
-	sort.Strings(tagKeys)
-	sort.Strings(tagValues)
 
-	fwdConfParts = append(fwdConfParts, conf.URL)
-	fwdConfParts = append(fwdConfParts, logSourcePath)
-	fwdConfParts = append(fwdConfParts, tagKeys...)
-	fwdConfParts = append(fwdConfParts, tagValues...)
-
-	signature := fmt.Sprintf("%x",
-		md5.Sum([]byte(strings.Join(fwdConfParts, ""))),
-	)
 	return signature
 }

@@ -36,22 +36,29 @@ type TestForwarderOptions struct {
 }
 
 func prepareTestForwarder(opts TestForwarderOptions) *Forwarder {
-	fwdCfg := workflow.ForwarderConfig{
-		URL:     "http://localhost:8088",
-		AddTags: map[string]string{"foo": "bar"},
+	var (
+		nopLogger = zerolog.Nop()
+		fwdCfg    workflow.ForwarderConfig
+	)
+
+	if opts.forwarderType == "loki" {
+		fwdCfg = workflow.ForwarderConfig{
+			Loki: &workflow.LokiForwarderConfig{
+				URL:     "http://localhost:8088",
+				AddTags: map[string]string{"foo": "bar"},
+			},
+		}
+		if opts.url != "" {
+			fwdCfg.Loki.URL = opts.url
+		}
+		fwdCfg.Loki.CompressRequest = opts.compressRequest
 	}
-	nopLogger := zerolog.Nop()
-	if opts.url != "" {
-		fwdCfg.URL = opts.url
-	}
+
 	return NewForwarder(ForwarderSettings{
-		Type:            opts.forwarderType,
-		URL:             fwdCfg.URL,
-		AddTags:         fwdCfg.AddTags,
+		ForwarderConfig: &fwdCfg,
 		Signature:       fwdCfg.CreateForwarderSignature("foobar"),
 		Source:          opts.source,
 		Logger:          &nopLogger,
-		CompressRequest: opts.compressRequest,
 	})
 }
 
@@ -75,7 +82,7 @@ func TestNewForwarder(t *testing.T) {
 		})
 		assert.NotNil(t, fwd)
 		assert.NotNil(t, fwd.settings)
-		assert.NotContains(t, fwd.settings.AddTags, "source")
+		assert.NotContains(t, fwd.Output.GetSettings(), "source")
 	})
 	t.Run("no forwarder created if forwarder's type not configured", func(t *testing.T) {
 		fwd := prepareTestForwarder(TestForwarderOptions{})

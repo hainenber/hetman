@@ -43,9 +43,10 @@ func prepareTestConfig() (*Config, []string, string) {
 				Id: "foo",
 				Forwarders: []workflow.ForwarderConfig{
 					{
-						Type:           "loki",
-						URL:            "abc.com",
-						ProbeReadiness: false,
+						Loki: &workflow.LokiForwarderConfig{
+							URL:            "abc.com",
+							ProbeReadiness: false,
+						},
 					},
 				},
 			},
@@ -66,7 +67,7 @@ func TestNewConfig(t *testing.T) {
 		assert.NotNil(t, conf)
 		assert.Equal(t, 2, len(conf.Targets))
 		assert.Equal(t, "/tmp", conf.GlobalConfig.RegistryDir)
-		assert.Equal(t, map[string]string{"label": "hetman", "source": "nginx", "dest": "loki"}, conf.Targets[0].Forwarders[0].AddTags)
+		assert.Equal(t, map[string]string{"label": "hetman", "source": "nginx", "dest": "loki"}, conf.Targets[0].Forwarders[0].Loki.AddTags)
 
 		buildPath, _ := os.Executable()
 		assert.Equal(t, filepath.Join(filepath.Dir(buildPath), "diskbuffer"), conf.GlobalConfig.DiskBuffer.Path)
@@ -123,7 +124,7 @@ func TestProcess(t *testing.T) {
 		conf, _, tmpDir := prepareTestConfig()
 		defer cleanup(tmpDir)
 		conf.Targets[0].Forwarders = []workflow.ForwarderConfig{
-			{URL: testServer.URL, ProbeReadiness: true},
+			{Loki: &workflow.LokiForwarderConfig{URL: testServer.URL, ProbeReadiness: true}},
 		}
 		processed, err := conf.Process()
 		assert.NotNil(t, processed)
@@ -138,7 +139,7 @@ func TestProcess(t *testing.T) {
 		defer cleanup(tmpDir)
 
 		conf.Targets[0].Forwarders = []workflow.ForwarderConfig{
-			{URL: testServer.URL, Type: "loki", ProbeReadiness: true},
+			{Loki: &workflow.LokiForwarderConfig{URL: testServer.URL, ProbeReadiness: true}},
 		}
 		processed, err := conf.Process()
 		assert.Nil(t, processed)
@@ -154,7 +155,7 @@ func TestProcess(t *testing.T) {
 		conf, _, tmpDir := prepareTestConfig()
 		defer cleanup(tmpDir)
 		conf.Targets[0].Forwarders = []workflow.ForwarderConfig{
-			{URL: testServer.URL, Type: "loki", ProbeReadiness: false},
+			{Loki: &workflow.LokiForwarderConfig{URL: testServer.URL, ProbeReadiness: true}},
 		}
 		processed, err := conf.Process()
 		assert.NotNil(t, processed)

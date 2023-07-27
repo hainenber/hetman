@@ -59,9 +59,10 @@ func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string
 					},
 					Forwarders: []workflow.ForwarderConfig{
 						{
-							Type:    "loki",
-							URL:     opt.serverURL,
-							AddTags: map[string]string{"a": "b", "c": "d"},
+							Loki: &workflow.LokiForwarderConfig{
+								URL:     opt.serverURL,
+								AddTags: map[string]string{"a": "b", "c": "d"},
+							},
 						},
 					},
 				},
@@ -69,9 +70,10 @@ func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string
 					Id: "aggregator",
 					Forwarders: []workflow.ForwarderConfig{
 						{
-							Type:    "loki",
-							URL:     opt.serverURL,
-							AddTags: map[string]string{"b": "a", "d": "c"},
+							Loki: &workflow.LokiForwarderConfig{
+								URL:     opt.serverURL,
+								AddTags: map[string]string{"b": "a", "d": "c"},
+							},
 						},
 					},
 				},
@@ -99,9 +101,10 @@ func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string
 			},
 			Forwarders: []workflow.ForwarderConfig{
 				{
-					Type:    "loki",
-					URL:     opt.serverURL,
-					AddTags: map[string]string{"a2": "b2", "c2": "d2"},
+					Loki: &workflow.LokiForwarderConfig{
+						URL:     opt.serverURL,
+						AddTags: map[string]string{"a2": "b2", "c2": "d2"},
+					},
 				},
 			},
 		})
@@ -123,9 +126,10 @@ func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string
 			},
 			Forwarders: []workflow.ForwarderConfig{
 				{
-					Type:    "loki",
-					URL:     opt.serverURL,
-					AddTags: map[string]string{"a3": "b3", "c3": "d3"},
+					Loki: &workflow.LokiForwarderConfig{
+						URL:     opt.serverURL,
+						AddTags: map[string]string{"a3": "b3", "c3": "d3"},
+					},
 				},
 			},
 		})
@@ -165,8 +169,8 @@ func TestProcessPathToForwarderMap(t *testing.T) {
 	globTmpNginxDir := filepath.Join(tmpNginxDir, "*")
 	globTmpSysDir := filepath.Join(tmpSyslogDir, "*")
 
-	testFwdConfig1 := workflow.ForwarderConfig{URL: "abc.com"}
-	testFwdConfig2 := workflow.ForwarderConfig{URL: "def.com"}
+	testFwdConfig1 := workflow.ForwarderConfig{Loki: &workflow.LokiForwarderConfig{URL: "abc.com"}}
+	testFwdConfig2 := workflow.ForwarderConfig{Loki: &workflow.LokiForwarderConfig{URL: "def.com"}}
 
 	headlessFwdId := uuid.New().String()
 

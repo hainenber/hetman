@@ -174,17 +174,15 @@ func (c Config) Process() (map[string]workflow.Workflow, error) {
 	for _, target := range c.Targets {
 		// Ensure none of forwarder's URL are empty
 		for _, fwd := range target.Forwarders {
-			if fwd.URL == "" {
-				err = fmt.Errorf("empty forwarder's URL config for target %s", target.Id)
-				return nil, err
-			}
+			if fwd.Loki != nil {
+				if fwd.Loki.URL == "" {
+					err = fmt.Errorf("empty forwarder's URL config for target %s", target.Id)
+					return nil, err
+				}
 
-			// Probe readiness for downstream services
-			// TODO: add readiness probe for other popular downstreams as well
-			if fwd.ProbeReadiness {
-				switch fwd.Type {
-				case "loki":
-					if err = probeReadiness(fwd.URL, "/ready"); err != nil {
+				// Probe readiness for downstream services
+				if fwd.Loki.ProbeReadiness {
+					if err = probeReadiness(fwd.Loki.URL, "/ready"); err != nil {
 						return nil, err
 					}
 				}

@@ -330,11 +330,8 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 			// This should be fixed in Go 1.21
 			fwdConf := fwdConf
 			fwd := forwarder.NewForwarder(forwarder.ForwarderSettings{
-				URL:             fwdConf.URL,
-				AddTags:         fwdConf.AddTags,
-				CompressRequest: fwdConf.CompressRequest,
+				ForwarderConfig: &fwdConf,
 				Logger:          &o.logger,
-				Type:            fwdConf.Type,
 				Signature:       fwdConf.CreateForwarderSignature(translatedPath),
 				Source:          translatedPath,
 			})

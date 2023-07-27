@@ -8,6 +8,7 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/hainenber/hetman/internal/telemetry/metrics"
+	"github.com/hainenber/hetman/internal/workflow"
 	"github.com/rs/zerolog"
 	"github.com/samber/lo"
 )
@@ -36,10 +37,7 @@ type Forwarder struct {
 }
 
 type ForwarderSettings struct {
-	Type            string
-	URL             string
-	AddTags         map[string]string
-	CompressRequest bool
+	ForwarderConfig *workflow.ForwarderConfig
 	Signature       string          // Signature from hashing entire forwarder struct
 	Source          string          // Source of tailed logs, will be sent to downstream as 1 of associative labels
 	Logger          *zerolog.Logger // Dedicated logger
@@ -51,31 +49,37 @@ type Output interface {
 }
 
 func NewForwarder(settings ForwarderSettings) *Forwarder {
-	// Deep copy forwarder settings to avoid contamination of "source" attribute
-	clonedForwarderSettings := settings
-	clonedForwarderSettings.AddTags = lo.Assign(settings.AddTags)
+	var (
+		forwarderOutput            Output
+		doneCreatingInnerForwarder bool
+	)
 
 	// For each failed delivery, maximum elapsed time for exp backoff is 5 seconds
 	backoffConfig := backoff.NewExponentialBackOff()
 	backoffConfig.MaxElapsedTime = 5 * time.Second
 
-	// Add "source" label with tailed filename as value
-	// Help distinguish log streams in single forwarded destination
-	if clonedForwarderSettings.AddTags != nil && clonedForwarderSettings.Source != "" {
-		clonedForwarderSettings.AddTags["source"] = clonedForwarderSettings.Source
-	}
-
 	// Initialize inner forwarder based on user-inputted type
-	var forwarderOutput Output
-	switch settings.Type {
-	case "loki":
+	// For Loki, deep copy forwarder settings to avoid contamination of "source" attribute
+	if settings.ForwarderConfig.Loki != nil {
+		lokiForwarderSetting := settings.ForwarderConfig.Loki
+		lokiForwarderSetting.AddTags = lo.Assign(settings.ForwarderConfig.Loki.AddTags)
+
+		// Add "source" label with tailed filename as value
+		// Help distinguish log streams in single forwarded destination
+		if lokiForwarderSetting.AddTags != nil && settings.Source != "" {
+			lokiForwarderSetting.AddTags["source"] = settings.Source
+		}
+
 		forwarderOutput = LokiOutput{
-			settings:   clonedForwarderSettings,
+			settings:   *lokiForwarderSetting,
 			httpClient: &http.Client{},
 		}
-	default:
+		doneCreatingInnerForwarder = true
+	}
+
+	if !doneCreatingInnerForwarder {
 		if settings.Logger != nil {
-			clonedForwarderSettings.Logger.Error().Msg("invalid forwarder type")
+			settings.Logger.Error().Msg("invalid forwarder type")
 		}
 		return nil
 	}
@@ -92,7 +96,7 @@ func NewForwarder(settings ForwarderSettings) *Forwarder {
 		Output:        forwarderOutput,
 		ForwarderChan: make(chan []pipeline.Data, 1024),
 		logger:        settings.Logger,
-		settings:      clonedForwarderSettings,
+		settings:      settings,
 	}
 }
 
@@ -119,7 +123,7 @@ func (f *Forwarder) Run(bufferChan chan pipeline.Data, backpressureChan chan int
 			}
 			err := f.forward(batch...)
 			if err != nil {
-				f.logger.Error().Err(err).Msgf("failed to forward batch of log to %v", f.settings.URL)
+				f.logger.Error().Err(err).Msg("failed to forward batch of log to destination")
 				// Queue batched log(s) back to buffer channel
 				for _, pipelineData := range batch {
 					bufferChan <- pipelineData
