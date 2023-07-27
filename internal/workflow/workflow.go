@@ -49,10 +49,16 @@ type MultilineConfig struct {
 type TargetConfig struct {
 	Forwarders []ForwarderConfig `koanf:"forwarders"`
 	Id         string            `koanf:"id"`
-	Paths      []string          `koanf:"paths"`
+	Input      InputConfig       `koanf:"input"`
 	Parser     ParserConfig      `koanf:"parser"`
 	Modifier   ModifierConfig    `koanf:"modifier"`
 	Type       string            `koanf:"type"`
+}
+
+type InputConfig struct {
+	Paths   []string `koanf:"paths"`
+	Brokers []string `koanf:"brokers"`
+	Topics  []string `koanf:"topics"`
 }
 
 type Workflow struct {

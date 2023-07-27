@@ -34,9 +34,11 @@ func prepareTestConfig() (*Config, []string, string) {
 		Targets: []workflow.TargetConfig{
 			{
 				Type: "file",
-				Paths: []string{
-					globTmpDir,
-					fnames[0],
+				Input: workflow.InputConfig{
+					Paths: []string{
+						globTmpDir,
+						fnames[0],
+					},
 				},
 			},
 			{
@@ -108,10 +110,20 @@ func TestProcess(t *testing.T) {
 
 	})
 
-	t.Run("failed to process backslahs ", func(t *testing.T) {
+	t.Run("failed to process backslashes ", func(t *testing.T) {
 		conf, _, tmpDir := prepareTestConfig()
 		defer cleanup(tmpDir)
 		conf.Targets[0].Id = "backslash/containing/target/id"
+
+		processed, err := conf.Process()
+		assert.Nil(t, processed)
+		assert.NotNil(t, err)
+	})
+
+	t.Run("failed to process un-typed input", func(t *testing.T) {
+		conf, _, tmpDir := prepareTestConfig()
+		defer cleanup(tmpDir)
+		conf.Targets[0].Type = ""
 
 		processed, err := conf.Process()
 		assert.Nil(t, processed)

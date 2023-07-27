@@ -154,8 +154,9 @@ func (c Config) Process() (map[string]workflow.Workflow, error) {
 	// If encounter glob paths, check if base directory is readable
 	// Only applicable to "file"-type targets
 	for _, target := range c.Targets {
-		if target.Type == "file" {
-			for _, targetPath := range target.Paths {
+		switch target.Type {
+		case "file":
+			for _, targetPath := range target.Input.Paths {
 				if strings.Contains(targetPath, "*") {
 					_, err := os.ReadDir(filepath.Dir(targetPath))
 					if err != nil {
@@ -168,6 +169,12 @@ func (c Config) Process() (map[string]workflow.Workflow, error) {
 					}
 				}
 			}
+		default:
+			// Not emit error if matching with condition for headless workflows
+			if len(target.Input.Paths) == 0 && len(target.Input.Brokers) == 0 {
+				continue
+			}
+			return nil, fmt.Errorf("invalid input type")
 		}
 	}
 
@@ -196,7 +203,7 @@ func (c Config) Process() (map[string]workflow.Workflow, error) {
 	workflows := make(map[string]workflow.Workflow)
 	for _, target := range c.Targets {
 		// Create headless workflows, i.e. workflow not having inputs
-		if len(target.Paths) == 0 {
+		if len(target.Input.Paths) == 0 && len(target.Input.Brokers) == 0 {
 			if headlessWorkflowId, ok := lo.Coalesce(target.Id, uuid.New().String()); ok {
 				workflows[headlessWorkflowId] = workflow.Workflow{
 					Parser:     target.Parser,
@@ -206,7 +213,7 @@ func (c Config) Process() (map[string]workflow.Workflow, error) {
 			}
 		}
 
-		for _, file := range target.Paths {
+		for _, file := range target.Input.Paths {
 			targetPath := file
 			// Get absolute format for target's paths
 			// Only applicable to "file"-type targets

@@ -53,9 +53,12 @@ func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string
 			},
 			Targets: []workflow.TargetConfig{
 				{
-					Id: "agent1",
-					Paths: []string{
-						filepath.Join(tmpLogDir, "*"),
+					Id:   "agent1",
+					Type: "file",
+					Input: workflow.InputConfig{
+						Paths: []string{
+							filepath.Join(tmpLogDir, "*"),
+						},
 					},
 					Forwarders: []workflow.ForwarderConfig{
 						{
@@ -85,9 +88,12 @@ func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string
 		tmpLogFile3, _ := os.CreateTemp("", "orchestrator-backpressure-file3-")
 		os.WriteFile(tmpLogFile3.Name(), []byte(`{"a":"b","c":"secretive"}`), 0777)
 		orchOption.Config.Targets = append(orchOption.Config.Targets, workflow.TargetConfig{
-			Id: "agent2",
-			Paths: []string{
-				tmpLogFile3.Name(),
+			Id:   "agent2",
+			Type: "file",
+			Input: workflow.InputConfig{
+				Paths: []string{
+					tmpLogFile3.Name(),
+				},
 			},
 			Parser: workflow.ParserConfig{
 				Format: "json",
@@ -115,9 +121,12 @@ func generateTestOrchestrator(opt TestOrchestratorOption) (*Orchestrator, string
 		tmpLogFile4, _ := os.CreateTemp("", "orchestrator-backpressure-file4-")
 		os.WriteFile(tmpLogFile4.Name(), []byte("a\n  b\n  c\n"), 0777)
 		orchOption.Config.Targets = append(orchOption.Config.Targets, workflow.TargetConfig{
-			Id: "agent3",
-			Paths: []string{
-				tmpLogFile4.Name(),
+			Id:   "agent3",
+			Type: "file",
+			Input: workflow.InputConfig{
+				Paths: []string{
+					tmpLogFile4.Name(),
+				},
 			},
 			Parser: workflow.ParserConfig{
 				Multiline: workflow.MultilineConfig{
