@@ -77,6 +77,21 @@ func NewForwarder(settings ForwarderSettings) *Forwarder {
 		doneCreatingInnerForwarder = true
 	}
 
+	if settings.ForwarderConfig.Kafka != nil {
+		kafkaOutput, err := NewKafkaOutput(KafkaOutputSetting{
+			Brokers: settings.ForwarderConfig.Kafka.Brokers,
+			Topic:   settings.ForwarderConfig.Kafka.Topic,
+		})
+		if err != nil {
+			if settings.Logger != nil {
+				settings.Logger.Error().Err(err).Msg("")
+			}
+			return nil
+		}
+		forwarderOutput = kafkaOutput
+		doneCreatingInnerForwarder = true
+	}
+
 	if !doneCreatingInnerForwarder {
 		if settings.Logger != nil {
 			settings.Logger.Error().Msg("invalid forwarder type")
