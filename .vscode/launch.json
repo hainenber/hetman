@@ -10,6 +10,11 @@
             "request": "launch",
             "mode": "auto",
             "program": "${fileDirname}"
+        },
+        {
+            "name": "Attach to Process",
+            "type": "go",
+            "request": "attach",
         }
     ]
 }
