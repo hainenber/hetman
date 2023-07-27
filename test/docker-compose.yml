@@ -5,7 +5,24 @@ services:
     image: victoriametrics/victoria-metrics
     ports:
       - 8428:8428
+    
+  kafka:
+    image: docker.io/bitnami/kafka:latest
+    ports:
+      - 9092:9092
+    environment: 
+      ALLOW_PLAINTEXT_LISTENER: yes
   
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - 8081:8080
+    depends_on:
+      - kafka
+    environment: 
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+
   hetman-agent:
     build: 
       context: ..
