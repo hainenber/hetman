@@ -50,4 +50,3 @@ targets:
             source: misc
             dest: loki
           compress_request: false
-          
