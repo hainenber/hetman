@@ -6,11 +6,12 @@ COPY go.mod go.sum .
 RUN go mod download
 # Build the agent
 COPY . .
-RUN mkdir -p ./bin && CGO_ENABLED=0 go build -o ./bin ./...
+RUN mkdir -p ./bin /etc/hetman && CGO_ENABLED=0 go build -o ./bin ./... && cp /app/*.yaml /etc/hetman
 
 ## Executor stage
-FROM alpine:latest
+FROM scratch
 # Move configs to proper directory
-RUN mkdir -p /etc/hetman
-COPY --from=builder /app/*.yaml /etc/hetman/
+COPY --from=builder /etc/hetman /etc/hetman
 COPY --from=builder /app/bin/hetman /usr/local/bin/hetman 
+
+ENTRYPOINT ["/usr/local/bin/hetman"]

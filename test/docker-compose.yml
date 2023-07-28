@@ -16,14 +16,9 @@ services:
       OTEL_SERVICE_NAME: "hetman"
       OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://grafana-agent:4318"
-    entrypoint: 
-      - sh
-      - -euc
-      - | 
-        mkdir -p /tmp/tmp_nginx/
-        echo '{"a":"1","b":"2","message":"abc"}' > /tmp/tmp_nginx/nginx.log
-        echo '{"c":"3","d":"4","password": "sensitive"}' > /tmp/tmp_nginx/nginx2.log
-        /usr/local/bin/hetman --mode=agent --config-file=/etc/hetman/hetman.agent.yaml --log-level=debug
+    command: [ "--mode=agent", "--config-file=/etc/hetman/hetman.agent.yaml", "--log-level=debug" ]
+    volumes:
+      - ./data:/tmp/tmp_nginx
 
   grafana-agent:
     image: grafana/agent:latest
