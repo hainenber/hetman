@@ -6,7 +6,9 @@ COPY go.mod go.sum .
 RUN go mod download
 # Build the agent
 COPY . .
-RUN mkdir -p ./bin /etc/hetman && CGO_ENABLED=0 go build -o ./bin ./... && cp /app/*.yaml /etc/hetman
+RUN mkdir -p ./bin /etc/hetman && \
+    CGO_ENABLED=0 go build -o ./bin ./... && \
+    stat /app/*.yaml 2>&1 >/dev/null && cp /app/yaml /app/*.yaml /etc/hetman || true
 
 ## Executor stage
 FROM scratch
