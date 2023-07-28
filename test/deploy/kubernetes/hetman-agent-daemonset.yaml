@@ -66,7 +66,9 @@ data:
   hetman.agent.yaml: |-
     global:
       registry_directory: /tmp
-      disk_buffer_persistence: true
+      disk_buffer:
+        enabled: true
+        size: 1GB
       backpressure_memory_limit: 1000
 
     targets:
@@ -77,12 +79,13 @@ data:
         parser: 
           format: json
         forwarders:
-          - url: http://loki:3100/loki/api/v1/push
-            add_tags:
-              label: hetman
-              dest: loki
-            compress_request: true 
-            probe_readiness: false
+          - loki:
+              url: http://loki:3100/loki/api/v1/push
+              add_tags:
+                label: hetman
+                dest: loki
+              compress_request: true 
+              probe_readiness: false
 
 ---
 apiVersion: v1
