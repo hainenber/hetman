@@ -1,5 +1,8 @@
 ## Builder stage
 FROM golang:1.20 as builder
+
+ARG GOPROXY="proxy.golang.org"
+
 WORKDIR /app
 # Allow caching image layer of Go dependencies 
 COPY go.mod go.sum /app/
