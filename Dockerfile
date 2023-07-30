@@ -1,5 +1,3 @@
-ARG GOPROXY="proxy.golang.org,direct"
-
 ## Builder stage
 FROM golang:1.20 as builder
 WORKDIR /app
@@ -9,7 +7,7 @@ RUN go mod download
 # Build the agent
 COPY . .
 RUN mkdir -p ./bin /etc/hetman && \
-    CGO_ENABLED=0 GOPROXY=$GOPROXY go build -o ./bin ./... && \
+    CGO_ENABLED=0 go build -o ./bin ./... && \
     stat /app/*.yaml 2>&1 >/dev/null && cp /app/yaml /app/*.yaml /etc/hetman || true
 
 ## Executor stage
