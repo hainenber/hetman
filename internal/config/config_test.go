@@ -43,6 +43,13 @@ func prepareTestConfig() (*Config, []string, string) {
 				},
 			},
 			{
+				Type: "kafka",
+				Input: workflow.InputConfig{
+					Brokers: []string{"localhost:9091"},
+					Topics:  []string{"foo", "bar"},
+				},
+			},
+			{
 				Id: "foo",
 				Forwarders: []workflow.ForwarderConfig{
 					{
