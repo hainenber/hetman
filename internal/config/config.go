@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"github.com/hainenber/hetman/internal/workflow"
@@ -102,11 +103,13 @@ func checkDiskBufferSize(diskBufferSize string) error {
 func (c Config) DetectDuplicateTargetID() error {
 	targetIds := make(map[string]bool, len(c.Targets))
 	for _, target := range c.Targets {
-		_, ok := targetIds[target.Id]
-		if ok {
-			return fmt.Errorf("duplicate target ID: %s", target.Id)
+		if target.Id != "" {
+			_, ok := targetIds[target.Id]
+			if ok {
+				return fmt.Errorf("duplicate target ID: %s", target.Id)
+			}
+			targetIds[target.Id] = true
 		}
-		targetIds[target.Id] = true
 	}
 	return nil
 }
@@ -168,9 +171,11 @@ func (c Config) Process() ([]workflow.Workflow, error) {
 					}
 				}
 			}
+		case "kafka":
+			continue
 		default:
 			// Not emit error if matching with condition for headless workflows
-			if len(target.Input.Paths) == 0 && len(target.Input.Brokers) == 0 {
+			if reflect.ValueOf(target.Input).IsZero() {
 				continue
 			}
 			return nil, fmt.Errorf("invalid input type")
