@@ -8,7 +8,8 @@ vulncheck:
 
 lint:
 	go fmt ./...
-	go test -cover ./...
+	go clean -testcache
+	go test -timeout 2m -cover ./...
 
 run-docker:
 	docker-compose -f test/docker-compose.yml up --remove-orphans --build -d 
