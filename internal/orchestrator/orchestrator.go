@@ -145,6 +145,7 @@ func (o *Orchestrator) Run() struct{} {
 			// Embed input for each path-to-forwarder mapping
 			workflowOptions = append(workflowOptions, &WorkflowOptions{
 				input:            i,
+				inputConfig:      wf.Input,
 				parserConfig:     wf.Parser,
 				modifierConfig:   wf.Modifier,
 				forwarderConfigs: wf.Forwarders,
