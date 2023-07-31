@@ -9,7 +9,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/google/uuid"
 	"github.com/hainenber/hetman/internal/config"
 	"github.com/hainenber/hetman/internal/forwarder"
 	"github.com/hainenber/hetman/internal/registry"
@@ -165,73 +164,6 @@ func TestNewOrchestrator(t *testing.T) {
 		},
 	})
 	assert.NotNil(t, orch)
-}
-
-func TestProcessPathToForwarderMap(t *testing.T) {
-	tmpNginxDir, _ := os.MkdirTemp("", "nginx")
-	defer os.RemoveAll(tmpNginxDir)
-	tmpSyslogDir, _ := os.MkdirTemp("", "sys")
-	defer os.RemoveAll(tmpSyslogDir)
-	tmpNginxFile, _ := os.CreateTemp(tmpNginxDir, "")
-	tmpSyslogFile, _ := os.CreateTemp(tmpSyslogDir, "")
-
-	globTmpNginxDir := filepath.Join(tmpNginxDir, "*")
-	globTmpSysDir := filepath.Join(tmpSyslogDir, "*")
-
-	testFwdConfig1 := workflow.ForwarderConfig{Loki: &workflow.LokiForwarderConfig{URL: "abc.com"}}
-	testFwdConfig2 := workflow.ForwarderConfig{Loki: &workflow.LokiForwarderConfig{URL: "def.com"}}
-
-	headlessFwdId := uuid.New().String()
-
-	arg := InputToForwarderMap{
-		headlessFwdId: &WorkflowOptions{
-			forwarderConfigs: []workflow.ForwarderConfig{
-				testFwdConfig1,
-			},
-		},
-		globTmpNginxDir: &WorkflowOptions{
-			forwarderConfigs: []workflow.ForwarderConfig{
-				testFwdConfig1,
-			},
-		},
-		tmpNginxFile.Name(): &WorkflowOptions{
-			forwarderConfigs: []workflow.ForwarderConfig{
-				testFwdConfig1,
-			},
-		},
-		globTmpSysDir: &WorkflowOptions{
-			forwarderConfigs: []workflow.ForwarderConfig{
-				testFwdConfig1,
-				testFwdConfig2,
-			},
-		},
-	}
-
-	expected := InputToForwarderMap{
-		headlessFwdId: &WorkflowOptions{
-			forwarderConfigs: []workflow.ForwarderConfig{
-				testFwdConfig1,
-			},
-		},
-		tmpNginxFile.Name(): &WorkflowOptions{
-			forwarderConfigs: []workflow.ForwarderConfig{
-				testFwdConfig1,
-			},
-		},
-		tmpSyslogFile.Name(): &WorkflowOptions{
-			forwarderConfigs: []workflow.ForwarderConfig{
-				testFwdConfig1,
-				testFwdConfig2,
-			},
-		},
-	}
-
-	processedInputToForwarderMap, err := processPathToForwarderMap(arg)
-	assert.NotNil(t, processedInputToForwarderMap)
-	assert.Nil(t, err)
-	for _, logFilename := range []string{tmpNginxFile.Name(), tmpSyslogFile.Name(), headlessFwdId} {
-		assert.Equal(t, expected[logFilename], processedInputToForwarderMap[logFilename])
-	}
 }
 
 func TestOrchestratorBackpressure(t *testing.T) {

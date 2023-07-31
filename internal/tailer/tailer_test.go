@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/hainenber/hetman/internal/backpressure"
 	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/hainenber/hetman/internal/tailer/state"
@@ -27,9 +26,7 @@ func createTestTailer(opts TailerOptions, aggregatorMode bool) (*Tailer, *os.Fil
 		tmpFileName string
 	)
 
-	if aggregatorMode {
-		tmpFileName = uuid.New().String()
-	} else {
+	if !aggregatorMode {
 		tmpFile, _ = os.CreateTemp("", "tailer-test-")
 		os.WriteFile(tmpFile.Name(), []byte("a\nb\n"), 0777)
 		tmpFileName = tmpFile.Name()

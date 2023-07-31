@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/hainenber/hetman/internal/workflow"
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -106,8 +107,9 @@ func TestProcess(t *testing.T) {
 		assert.Nil(t, err)
 
 		// Expect headless workflow got produced
-		assert.Contains(t, processed, "foo")
-
+		assert.NotEmpty(t, lo.Filter(processed, func(item workflow.Workflow, _ int) bool {
+			return len(item.Input.Paths) == 0 && len(item.Input.Brokers) == 0 && len(item.Input.Topics) == 0
+		}))
 	})
 
 	t.Run("failed to process backslashes ", func(t *testing.T) {
