@@ -3,7 +3,7 @@ package orchestrator
 import (
 	"context"
 	"path/filepath"
-	"strings"
+	"reflect"
 	"sync"
 	"time"
 
@@ -33,7 +33,7 @@ type Orchestrator struct {
 	orchWg         sync.WaitGroup
 
 	config           *config.Config
-	workflows        map[string]workflow.Workflow
+	workflows        []workflow.Workflow
 	DoneInstantiated bool
 	logger           zerolog.Logger
 	registrar        *registry.Registry
@@ -60,6 +60,7 @@ type OrchestratorOption struct {
 func NewOrchestrator(options OrchestratorOption) *Orchestrator {
 	// Get path-to-forwarder map from validated config
 	// This will be foundational in later input generation
+	// TODO: Detect duplication of tailer-forwarder mapping before agent got starting up
 	workflows, err := options.Config.Process()
 	if err != nil {
 		options.Logger.Fatal().Err(err).Msg("")
@@ -90,125 +91,89 @@ func NewOrchestrator(options OrchestratorOption) *Orchestrator {
 
 type WorkflowOptions struct {
 	input            *input.Input
+	inputConfig      workflow.InputConfig
 	parserConfig     workflow.ParserConfig
 	modifierConfig   workflow.ModifierConfig
 	forwarderConfigs []workflow.ForwarderConfig
 	readPosition     int64
 }
 
-type InputToForwarderMap map[string]*WorkflowOptions
-
-// processPathToForwarderMap process input-to-forwarder map to prevent duplicated tailers and forwarders
-func processPathToForwarderMap(inputToForwarderMap InputToForwarderMap) (InputToForwarderMap, error) {
-	result := make(InputToForwarderMap)
-
-	for target, workflowOpts := range inputToForwarderMap {
-		// Skip processing for headless workflow with non-"filepath" identifier
-		if !strings.Contains(target, "/") {
-			result[target] = &WorkflowOptions{
-				input:            workflowOpts.input,
-				parserConfig:     workflowOpts.parserConfig,
-				modifierConfig:   workflowOpts.modifierConfig,
-				forwarderConfigs: workflowOpts.forwarderConfigs,
-			}
-			continue
-		}
-
-		translatedPaths, err := filepath.Glob(target)
-		if err != nil {
-			return nil, err
-		}
-		for _, translatedPath := range translatedPaths {
-			existingFwdConfs, ok := result[translatedPath]
-			if ok {
-				result[translatedPath].forwarderConfigs = append(existingFwdConfs.forwarderConfigs, workflowOpts.forwarderConfigs...)
-			} else {
-				result[translatedPath] = &WorkflowOptions{
-					input:            workflowOpts.input,
-					parserConfig:     workflowOpts.parserConfig,
-					modifierConfig:   workflowOpts.modifierConfig,
-					forwarderConfigs: workflowOpts.forwarderConfigs,
-				}
-			}
-		}
-	}
-
-	for translatedPath, workflowOpts := range result {
-		result[translatedPath].forwarderConfigs = lo.UniqBy(workflowOpts.forwarderConfigs, func(fc workflow.ForwarderConfig) string {
-			return fc.CreateForwarderSignature(translatedPath)
-		})
-	}
-
-	return result, nil
-}
-
 // Kickstart operations for forwarders and tailers
 // If logs were disk-persisted before, read them up for re-delivery
 func (o *Orchestrator) Run() struct{} {
 	var (
-		tailedFileStateTicker       = time.NewTicker(1 * time.Second)
-		processedPathToForwarderMap = make(InputToForwarderMap)
+		tailedFileStateTicker = time.NewTicker(1 * time.Second)
+		workflowOptions       []*WorkflowOptions
+		finalWorkflowOptions  []*WorkflowOptions
 	)
 
 	o.logger.Info().Msg("Initializing inputs...")
-	for path, wf := range o.workflows {
-		// If target's paths do not exist, initialized headless workflow
+	for _, wf := range o.workflows {
+		// If whole input is empty, initialize headless workflow
+		// Else if input isn't empty but if paths are not given, initialize workflow for other input type, i.e. Kafka
 		// which is strictly for aggregator mode
-		if !strings.Contains(path, "/") {
-			processedPathToForwarderMap[path] = &WorkflowOptions{
+		if len(wf.Input.Paths) == 0 {
+			nonFileWorkflowOption := &WorkflowOptions{
 				parserConfig:     wf.Parser,
 				modifierConfig:   wf.Modifier,
 				forwarderConfigs: wf.Forwarders,
 			}
+			if !reflect.ValueOf(wf.Input).IsZero() {
+				nonFileWorkflowOption.inputConfig = wf.Input
+			}
+			finalWorkflowOptions = append(finalWorkflowOptions, nonFileWorkflowOption)
 			continue
 		}
 
 		// Initialize input from filepath
-		i, err := input.NewInput(input.InputOptions{
-			Logger: o.logger,
-			Path:   path,
-		})
-		if err != nil {
-			o.logger.Fatal().Err(err).Msg("")
-		}
-		o.inputWg.Add(1)
-		go func() {
-			defer o.inputWg.Done()
-			i.Run() // No op if path args is not glob-like
-		}()
-		o.logger.Info().Msgf("Input %v is running", path)
-		o.inputs = append(o.inputs, i)
-
-		// Embed input for each path-to-forwarder mapping
-		processedPathToForwarderMap[path] = &WorkflowOptions{
-			input:            i,
-			parserConfig:     wf.Parser,
-			modifierConfig:   wf.Modifier,
-			forwarderConfigs: wf.Forwarders,
-		}
-
-		// Generate log workflow for new files detected from watcher
-		o.inputWg.Add(1)
-		go func(innerFwdConf []workflow.ForwarderConfig) {
-			defer o.inputWg.Done()
-
-			// If watcher is not init'ed, the target paths are not glob-like
-			// and are literal paths
-			// No need to watch for changes and spin up log workflow
-			if i.GetWatcher() == nil {
-				return
+		for _, path := range wf.Input.Paths {
+			i, err := input.NewInput(input.InputOptions{
+				Logger: o.logger,
+				Path:   path,
+			})
+			if err != nil {
+				o.logger.Fatal().Err(err).Msg("")
 			}
+			o.inputWg.Add(1)
+			go func() {
+				defer o.inputWg.Done()
+				i.Run() // No op if path args is not glob-like
+			}()
+			o.logger.Info().Msgf("Input %v is running", path)
+			o.inputs = append(o.inputs, i)
 
-			for renameEvent := range i.InputChan {
-				o.runWorkflow(InputToForwarderMap{
-					renameEvent.Filepath: &WorkflowOptions{
-						input:            i,
-						forwarderConfigs: innerFwdConf,
-						readPosition:     renameEvent.LastReadPosition,
-					},
-				})
-			}
-		}(wf.Forwarders)
+			// Embed input for each path-to-forwarder mapping
+			workflowOptions = append(workflowOptions, &WorkflowOptions{
+				input:            i,
+				parserConfig:     wf.Parser,
+				modifierConfig:   wf.Modifier,
+				forwarderConfigs: wf.Forwarders,
+			})
+
+			// Generate log workflow for new files detected from watcher
+			o.inputWg.Add(1)
+			go func(innerFwdConf []workflow.ForwarderConfig) {
+				defer o.inputWg.Done()
+
+				// If watcher is not init'ed, the target paths are not glob-like
+				// and are literal paths
+				// No need to watch for changes and spin up log workflow
+				if i.GetWatcher() == nil {
+					return
+				}
+
+				for renameEvent := range i.InputChan {
+					o.runWorkflow([]*WorkflowOptions{
+						{
+							input:            i,
+							inputConfig:      workflow.InputConfig{Paths: []string{renameEvent.Filepath}},
+							forwarderConfigs: innerFwdConf,
+							readPosition:     renameEvent.LastReadPosition,
+						},
+					})
+				}
+			}(wf.Forwarders)
+		}
 	}
 
 	// Periodically persist last read positions of tailed files into disk
@@ -225,14 +190,25 @@ func (o *Orchestrator) Run() struct{} {
 		}
 	}()
 
-	// Group forwarder configs by input's path
-	processedPathToForwarderMap, err := processPathToForwarderMap(processedPathToForwarderMap)
-	if err != nil {
-		o.logger.Fatal().Err(err).Msg("")
+	// Find files matching possible glob pattern
+	for _, opt := range workflowOptions {
+		for _, possibleGlobPattern := range opt.inputConfig.Paths {
+			matches, err := filepath.Glob(possibleGlobPattern)
+			if err != nil {
+				o.logger.Fatal().Err(err).Msgf("error when finding files matching pattern %s", possibleGlobPattern)
+			}
+			finalWorkflowOptions = append(finalWorkflowOptions, &WorkflowOptions{
+				input:            opt.input,
+				inputConfig:      workflow.InputConfig{Paths: matches},
+				parserConfig:     opt.parserConfig,
+				modifierConfig:   opt.modifierConfig,
+				forwarderConfigs: opt.forwarderConfigs,
+			})
+		}
 	}
 
 	// Execute tailer->buffer->forwarder workflow for each mapping
-	o.runWorkflow(processedPathToForwarderMap)
+	o.runWorkflow(finalWorkflowOptions)
 
 	// Signify orchestrator has completed instantiation of all required components
 	o.DoneInstantiated = true
@@ -256,7 +232,7 @@ func (o *Orchestrator) Run() struct{} {
 
 // Execute tailer->modifier->parser->buffer->forwarder workflow
 // There's a blanket backpressure engine for the entire workflow
-func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderMap) {
+func (o *Orchestrator) runWorkflow(workflowOptions []*WorkflowOptions) {
 	// A backpressure engine strictly handles one workflow
 	o.logger.Info().Msg("Initializing backpressure registry...")
 	backpressureEngine := backpressure.NewBackpressure(backpressure.BackpressureOptions{
@@ -274,152 +250,154 @@ func (o *Orchestrator) runWorkflow(processedPathToForwarderMap InputToForwarderM
 	o.backpressureEngines = append(o.backpressureEngines, backpressureEngine)
 
 	// Initiate workflow from path-to-forwarder map
-	for translatedPath, workflowOpts := range processedPathToForwarderMap {
-		// Check if there's any saved offset for this file
-		// This can be override by read position present in workflow options
-		var offset int64
-		existingOffset, exists := o.registrar.Offsets[translatedPath]
-		if exists {
-			offset = existingOffset
-		}
-		if workflowOpts.readPosition != 0 {
-			offset = workflowOpts.readPosition
-		}
-
-		// Initialize tailer with options
-		t, err := tailer.NewTailer(tailer.TailerOptions{
-			File:               translatedPath,
-			Logger:             o.logger,
-			Offset:             offset,
-			BackpressureEngine: backpressureEngine,
-		})
-		if err != nil {
-			o.logger.Error().Err(err).Msg("")
-		}
-		o.logger.Info().Msgf("Tailer for path %v has been initialized", translatedPath)
-
-		// Register tailer into workflow-wide backpressure engine
-		backpressureEngine.RegisterTailerChan(t.StateChan)
-
-		// Register tailer into associated input
-		// This is to get old, renamed file's last read position
-		// to continue tailing from correct offset for newly renamed file
-		if workflowOpts.input != nil {
-			workflowOpts.input.RegisterTailer(t)
-			o.logger.Info().Msgf("Tailer for path %v has been registered into input", translatedPath)
-		}
-
-		// Each workflow has a single parser
-		ps := parser.NewParser(parser.ParserOptions{
-			Format:           workflowOpts.parserConfig.Format,
-			Pattern:          workflowOpts.parserConfig.Pattern,
-			MultilinePattern: workflowOpts.parserConfig.Multiline.Pattern,
-			Logger:           o.logger,
-		})
-
-		// Each workflow has a single modifier
-		mod := modifier.NewModifier(modifier.ModifierOptions{
-			ModifierSettings: workflowOpts.modifierConfig,
-			Logger:           o.logger,
-		})
-
-		// Create a buffer associative with each forwarder
-		var buffers []*buffer.Buffer
-		for _, fwdConf := range workflowOpts.forwarderConfigs {
-			// Copy forwarder config to new variable to avoid race condition
-			// This should be fixed in Go 1.21
-			fwdConf := fwdConf
-			fwd := forwarder.NewForwarder(forwarder.ForwarderSettings{
-				ForwarderConfig: &fwdConf,
-				Logger:          &o.logger,
-				Signature:       fwdConf.CreateForwarderSignature(translatedPath),
-				Source:          translatedPath,
-			})
-			fwdBuffer := buffer.NewBuffer(buffer.BufferOption{
-				Signature:         fwd.GetSignature(),
-				Logger:            o.logger,
-				DiskBufferSetting: *o.config.GlobalConfig.DiskBuffer,
-			})
-
-			// Read disk-persisted logs from prior saved file, if exists
-			if bufferedPath, exists := o.registrar.BufferedPaths[fwdBuffer.GetSignature()]; exists {
-				ps.LoadPersistedLogs(bufferedPath)
+	for _, workflowOpts := range workflowOptions {
+		for _, translatedPath := range workflowOpts.inputConfig.Paths {
+			// Check if there's any saved offset for this file
+			// This can be override by read position present in workflow options
+			var offset int64
+			existingOffset, exists := o.registrar.Offsets[translatedPath]
+			if exists {
+				offset = existingOffset
+			}
+			if workflowOpts.readPosition != 0 {
+				offset = workflowOpts.readPosition
 			}
 
-			buffers = append(buffers, fwdBuffer)
-			o.buffers = append(o.buffers, fwdBuffer)
-			o.forwarders = append(o.forwarders, fwd)
-
-			// Start forwarding log to downstream
-			o.forwarderWg.Add(1)
-			go func() {
-				defer o.forwarderWg.Done()
-				fwd.Run(fwdBuffer.BufferChan, backpressureEngine.UpdateChan)
-			}()
-
-			// Start buffering logs
-			// Could be either memory-based or disk-based
-			o.bufferWg.Add(1)
-			go func() {
-				defer o.bufferWg.Done()
-				fwdBuffer.Run(fwd.ForwarderChan)
-			}()
-			if o.config.GlobalConfig.DiskBuffer.Enabled {
-				o.bufferWg.Add(3)
-				go func() {
-					defer o.bufferWg.Done()
-					fwdBuffer.BufferSegmentToDiskLoop()
-				}()
-				go func() {
-					defer o.bufferWg.Done()
-					fwdBuffer.LoadSegmentToForwarderLoop(fwd.ForwarderChan)
-					// Last sender to forwarder's channel
-					// Close it off once done
-					close(fwd.ForwarderChan)
-				}()
-				go func() {
-					defer o.bufferWg.Done()
-					fwdBuffer.DeleteUsedSegmentFileLoop()
-				}()
+			// Initialize tailer with options
+			t, err := tailer.NewTailer(tailer.TailerOptions{
+				File:               translatedPath,
+				Logger:             o.logger,
+				Offset:             offset,
+				BackpressureEngine: backpressureEngine,
+			})
+			if err != nil {
+				o.logger.Error().Err(err).Msg("")
 			}
-		}
+			o.logger.Info().Msgf("Tailer for path %v has been initialized", translatedPath)
 
-		// Start tailing files (for "file"-type target)
-		o.tailers = append(o.tailers, t)
-		o.tailerWg.Add(1)
-		go func() {
-			defer o.tailerWg.Done()
-			t.Run(ps.ParserChan)
-		}()
-		if t.Tailer != nil {
-			o.logger.Info().Msgf("Tailer for path \"%v\" is now running", t.Tailer.Filename)
-		} else {
-			o.logger.Info().Msg("Tailer for upstream service and is now running")
-		}
+			// Register tailer into workflow-wide backpressure engine
+			backpressureEngine.RegisterTailerChan(t.StateChan)
 
-		// Start parsing scrapped logs
-		o.parsers = append(o.parsers, ps)
-		o.parserWg.Add(1)
-		go func() {
-			defer o.parserWg.Done()
-			ps.Run(mod.ModifierChan)
-		}()
-		if workflowOpts.parserConfig.Multiline.Pattern != "" {
+			// Register tailer into associated input
+			// This is to get old, renamed file's last read position
+			// to continue tailing from correct offset for newly renamed file
+			if workflowOpts.input != nil {
+				workflowOpts.input.RegisterTailer(t)
+				o.logger.Info().Msgf("Tailer for path %v has been registered into input", translatedPath)
+			}
+
+			// Each workflow has a single parser
+			ps := parser.NewParser(parser.ParserOptions{
+				Format:           workflowOpts.parserConfig.Format,
+				Pattern:          workflowOpts.parserConfig.Pattern,
+				MultilinePattern: workflowOpts.parserConfig.Multiline.Pattern,
+				Logger:           o.logger,
+			})
+
+			// Each workflow has a single modifier
+			mod := modifier.NewModifier(modifier.ModifierOptions{
+				ModifierSettings: workflowOpts.modifierConfig,
+				Logger:           o.logger,
+			})
+
+			// Create a buffer associative with each forwarder
+			var buffers []*buffer.Buffer
+			for _, fwdConf := range workflowOpts.forwarderConfigs {
+				// Copy forwarder config to new variable to avoid race condition
+				// This should be fixed in Go 1.21
+				fwdConf := fwdConf
+				fwd := forwarder.NewForwarder(forwarder.ForwarderSettings{
+					ForwarderConfig: &fwdConf,
+					Logger:          &o.logger,
+					Signature:       fwdConf.CreateForwarderSignature(translatedPath),
+					Source:          translatedPath,
+				})
+				fwdBuffer := buffer.NewBuffer(buffer.BufferOption{
+					Signature:         fwd.GetSignature(),
+					Logger:            o.logger,
+					DiskBufferSetting: *o.config.GlobalConfig.DiskBuffer,
+				})
+
+				// Read disk-persisted logs from prior saved file, if exists
+				if bufferedPath, exists := o.registrar.BufferedPaths[fwdBuffer.GetSignature()]; exists {
+					ps.LoadPersistedLogs(bufferedPath)
+				}
+
+				buffers = append(buffers, fwdBuffer)
+				o.buffers = append(o.buffers, fwdBuffer)
+				o.forwarders = append(o.forwarders, fwd)
+
+				// Start forwarding log to downstream
+				o.forwarderWg.Add(1)
+				go func() {
+					defer o.forwarderWg.Done()
+					fwd.Run(fwdBuffer.BufferChan, backpressureEngine.UpdateChan)
+				}()
+
+				// Start buffering logs
+				// Could be either memory-based or disk-based
+				o.bufferWg.Add(1)
+				go func() {
+					defer o.bufferWg.Done()
+					fwdBuffer.Run(fwd.ForwarderChan)
+				}()
+				if o.config.GlobalConfig.DiskBuffer.Enabled {
+					o.bufferWg.Add(3)
+					go func() {
+						defer o.bufferWg.Done()
+						fwdBuffer.BufferSegmentToDiskLoop()
+					}()
+					go func() {
+						defer o.bufferWg.Done()
+						fwdBuffer.LoadSegmentToForwarderLoop(fwd.ForwarderChan)
+						// Last sender to forwarder's channel
+						// Close it off once done
+						close(fwd.ForwarderChan)
+					}()
+					go func() {
+						defer o.bufferWg.Done()
+						fwdBuffer.DeleteUsedSegmentFileLoop()
+					}()
+				}
+			}
+
+			// Start tailing files (for "file"-type target)
+			o.tailers = append(o.tailers, t)
+			o.tailerWg.Add(1)
+			go func() {
+				defer o.tailerWg.Done()
+				t.Run(ps.ParserChan)
+			}()
+			if t.Tailer != nil {
+				o.logger.Info().Msgf("Tailer for path \"%v\" is now running", t.Tailer.Filename)
+			} else {
+				o.logger.Info().Msg("Tailer for upstream service and is now running")
+			}
+
+			// Start parsing scrapped logs
+			o.parsers = append(o.parsers, ps)
 			o.parserWg.Add(1)
 			go func() {
 				defer o.parserWg.Done()
-				ps.ProcessMultilineLogLoop(mod.ModifierChan)
+				ps.Run(mod.ModifierChan)
+			}()
+			if workflowOpts.parserConfig.Multiline.Pattern != "" {
+				o.parserWg.Add(1)
+				go func() {
+					defer o.parserWg.Done()
+					ps.ProcessMultilineLogLoop(mod.ModifierChan)
+				}()
+			}
+
+			// Start modifying parsed logs
+			o.modifiers = append(o.modifiers, mod)
+			o.modifierWg.Add(1)
+			go func() {
+				defer o.modifierWg.Done()
+				bufferChans := lo.Map(buffers, func(item *buffer.Buffer, _ int) chan pipeline.Data { return item.BufferChan })
+				mod.Run(bufferChans)
 			}()
 		}
-
-		// Start modifying parsed logs
-		o.modifiers = append(o.modifiers, mod)
-		o.modifierWg.Add(1)
-		go func() {
-			defer o.modifierWg.Done()
-			bufferChans := lo.Map(buffers, func(item *buffer.Buffer, _ int) chan pipeline.Data { return item.BufferChan })
-			mod.Run(bufferChans)
-		}()
 	}
 }
 

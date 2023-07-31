@@ -62,6 +62,7 @@ type InputConfig struct {
 }
 
 type Workflow struct {
+	Input      InputConfig
 	Forwarders []ForwarderConfig
 	Parser     ParserConfig
 	Modifier   ModifierConfig

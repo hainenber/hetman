@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/hainenber/hetman/internal/workflow"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/file"
@@ -136,7 +135,7 @@ func probeReadiness(fwdUrl string, readinessPath string) error {
 }
 
 // Process performs baseline config check and generate path-to-forwarder map
-func (c Config) Process() (map[string]workflow.Workflow, error) {
+func (c Config) Process() ([]workflow.Workflow, error) {
 	// Prevent duplicate ID of targets
 	err := c.DetectDuplicateTargetID()
 	if err != nil {
@@ -197,43 +196,56 @@ func (c Config) Process() (map[string]workflow.Workflow, error) {
 		}
 	}
 
-	// Convert target paths to "absolute path" format
-	// Consolidate unique paths to several matching forwarders
-	// to prevent duplicate tailers
-	workflows := make(map[string]workflow.Workflow)
+	var workflows []workflow.Workflow
 	for _, target := range c.Targets {
 		// Create headless workflows, i.e. workflow not having inputs
 		if len(target.Input.Paths) == 0 && len(target.Input.Brokers) == 0 {
-			if headlessWorkflowId, ok := lo.Coalesce(target.Id, uuid.New().String()); ok {
-				workflows[headlessWorkflowId] = workflow.Workflow{
-					Parser:     target.Parser,
-					Modifier:   target.Modifier,
-					Forwarders: target.Forwarders,
-				}
-			}
+			workflows = append(workflows, workflow.Workflow{
+				Parser:     target.Parser,
+				Modifier:   target.Modifier,
+				Forwarders: target.Forwarders,
+			})
 		}
 
-		for _, file := range target.Input.Paths {
-			targetPath := file
-			// Get absolute format for target's paths
-			// Only applicable to "file"-type targets
-			if target.Type == "file" {
+		// Convert target paths to "absolute path" format
+		// Consolidate unique paths to several matching forwarders
+		// to prevent duplicate tailers
+		// Only applicable to "file" input
+		switch target.Type {
+		case "file":
+			uniqueWorkflows := make(map[string]workflow.Workflow)
+			for _, file := range target.Input.Paths {
+				targetPath := file
+				// Get absolute format for target's paths
+				// Only applicable to "file"-type targets
 				targetPath, err = filepath.Abs(file)
 				if err != nil {
 					return nil, err
 				}
-			}
-
-			fwdConfs, ok := workflows[targetPath]
-			if ok {
-				fwdConfs.Forwarders = append(fwdConfs.Forwarders, target.Forwarders...)
-			} else {
-				workflows[targetPath] = workflow.Workflow{
-					Parser:     target.Parser,
-					Modifier:   target.Modifier,
-					Forwarders: target.Forwarders,
+				fwdConfs, ok := uniqueWorkflows[targetPath]
+				if ok {
+					fwdConfs.Forwarders = append(fwdConfs.Forwarders, target.Forwarders...)
+				} else {
+					uniqueWorkflows[targetPath] = workflow.Workflow{
+						Input:      workflow.InputConfig{Paths: []string{targetPath}},
+						Parser:     target.Parser,
+						Modifier:   target.Modifier,
+						Forwarders: target.Forwarders,
+					}
 				}
 			}
+			workflows = append(workflows, lo.Values(uniqueWorkflows)...)
+
+		case "kafka":
+			workflows = append(workflows, workflow.Workflow{
+				Input: workflow.InputConfig{
+					Brokers: target.Input.Brokers,
+					Topics:  target.Input.Topics,
+				},
+				Parser:     target.Parser,
+				Modifier:   target.Modifier,
+				Forwarders: target.Forwarders,
+			})
 		}
 	}
 
