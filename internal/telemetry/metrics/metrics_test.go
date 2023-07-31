@@ -17,7 +17,7 @@ func TestInitiateMetricProvider(t *testing.T) {
 	assert.NotNil(t, Meters)
 }
 
-func TestToTile(t *testing.T) {
+func TestToTitle(t *testing.T) {
 	assert.Equal(t, "", toTitle(""))
 	assert.Equal(t, "Abc", toTitle("abc"))
 }
