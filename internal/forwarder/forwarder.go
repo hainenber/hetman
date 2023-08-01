@@ -31,7 +31,7 @@ type Forwarder struct {
 	ctx           context.Context      // Context for forwarder struct, primarily for cancellation when needed
 	cancelFunc    context.CancelFunc   // Context cancellation function
 	ForwarderChan chan []pipeline.Data // Channel to receive logs from buffer stage
-	Output        Output               // Implementation of forwarder that sends events to correct output
+	Output        ForwarderOutput      // Implementation of forwarder that sends events to correct output
 	logger        *zerolog.Logger      // Dedicated logger
 	settings      ForwarderSettings    // Forwarder's settings
 }
@@ -43,14 +43,14 @@ type ForwarderSettings struct {
 	Logger          *zerolog.Logger // Dedicated logger
 }
 
-type Output interface {
-	PreparePayload(...pipeline.Data) (func() error, error)
+type ForwarderOutput interface {
+	SendEvents(...pipeline.Data) (func() error, error)
 	GetSettings() map[string]interface{}
 }
 
 func NewForwarder(settings ForwarderSettings) *Forwarder {
 	var (
-		forwarderOutput            Output
+		forwarderOutput            ForwarderOutput
 		doneCreatingInnerForwarder bool
 	)
 
@@ -80,7 +80,7 @@ func NewForwarder(settings ForwarderSettings) *Forwarder {
 	if settings.ForwarderConfig.Kafka != nil {
 		kafkaOutput, err := NewKafkaOutput(KafkaOutputSetting{
 			Brokers: settings.ForwarderConfig.Kafka.Brokers,
-			Topic:   settings.ForwarderConfig.Kafka.Topic,
+			Topics:  settings.ForwarderConfig.Kafka.Topics,
 		})
 		if err != nil {
 			if settings.Logger != nil {
@@ -188,7 +188,7 @@ func (f *Forwarder) Close() {
 
 // forward() is a generic way to send logs to other downstream log consumers
 func (f *Forwarder) forward(forwardArgs ...pipeline.Data) error {
-	innerForwarderFunc, err := f.Output.PreparePayload(forwardArgs...)
+	innerForwarderFunc, err := f.Output.SendEvents(forwardArgs...)
 	if err != nil {
 		return err
 	}

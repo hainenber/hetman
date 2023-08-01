@@ -20,7 +20,7 @@ type LokiOutput struct {
 	httpClient *http.Client
 }
 
-func (l LokiOutput) PreparePayload(forwardArgs ...pipeline.Data) (func() error, error) {
+func (l LokiOutput) SendEvents(forwardArgs ...pipeline.Data) (func() error, error) {
 	// Setting up log payload
 	payload := make([]PayloadStream, len(forwardArgs))
 	for i, arg := range forwardArgs {
