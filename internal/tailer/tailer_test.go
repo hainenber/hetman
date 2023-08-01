@@ -11,6 +11,7 @@ import (
 	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/hainenber/hetman/internal/tailer/state"
 	"github.com/hainenber/hetman/internal/telemetry/metrics"
+	"github.com/hainenber/hetman/internal/workflow"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -21,19 +22,18 @@ func TestMain(m *testing.M) {
 
 func createTestTailer(opts TailerOptions, aggregatorMode bool) (*Tailer, *os.File, error) {
 	var (
-		tl          *Tailer
-		tmpFile     *os.File
-		tmpFileName string
+		paths   []string
+		tmpFile *os.File
 	)
 
 	if !aggregatorMode {
 		tmpFile, _ = os.CreateTemp("", "tailer-test-")
 		os.WriteFile(tmpFile.Name(), []byte("a\nb\n"), 0777)
-		tmpFileName = tmpFile.Name()
+		paths = append(paths, tmpFile.Name())
 	}
 
 	tl, err := NewTailer(TailerOptions{
-		File:               tmpFileName,
+		Setting:            workflow.InputConfig{Paths: paths},
 		Offset:             opts.Offset,
 		BackpressureEngine: opts.BackpressureEngine,
 	})
@@ -48,33 +48,36 @@ func TestNewTailer(t *testing.T) {
 		defer os.Remove(tmpFile.Name())
 		assert.Nil(t, err)
 		assert.NotNil(t, tl)
-		assert.NotNil(t, tl.Tailer)
+		assert.NotNil(t, tl.TailerInput)
 	})
 	t.Run("tailer with no filepath, i.e. tailer for aggregator mode", func(t *testing.T) {
 		tl, _, err := createTestTailer(TailerOptions{}, true)
 		assert.Nil(t, err)
-		assert.Nil(t, tl.Tailer)
+		assert.Nil(t, tl.TailerInput)
 	})
 }
 
 func TestTailerClose(t *testing.T) {
 	t.Parallel()
-	t.Run("close normal tailer", func(t *testing.T) {
+	t.Run("close normal file-based tailer", func(t *testing.T) {
 		tl, tmpFile, _ := createTestTailer(TailerOptions{Offset: 0}, false)
 		defer os.Remove(tmpFile.Name())
 
-		<-tl.Tailer.Lines
-
-		assert.NotPanics(t, tl.Close)
-		assert.Equal(t, int64(0), tl.Offset)
-		assert.Equal(t, state.Closed, tl.GetState())
+		if tailerInput, ok := tl.TailerInput.(*FileTailerInput); ok {
+			<-tailerInput.Tailer.Lines
+			assert.NotPanics(t, tl.Close)
+			assert.Equal(t, int64(0), tailerInput.Offset)
+			assert.Equal(t, state.Closed, tl.GetState())
+		}
 	})
-	t.Run("close aggregator-oriented tailer", func(t *testing.T) {
+	t.Run("close aggregator-oriented, file-based tailer", func(t *testing.T) {
 		tl, _, _ := createTestTailer(TailerOptions{Offset: 0}, true)
 
-		assert.NotPanics(t, tl.Close)
-		assert.Equal(t, int64(0), tl.Offset)
-		assert.Equal(t, state.Closed, tl.GetState())
+		if tailerInput, ok := tl.TailerInput.(*FileTailerInput); ok {
+			assert.NotPanics(t, tl.Close)
+			assert.Equal(t, int64(0), tailerInput.Offset)
+			assert.Equal(t, state.Closed, tl.GetState())
+		}
 	})
 }
 
@@ -83,12 +86,13 @@ func TestGetLastReadPosition(t *testing.T) {
 		tl, tmpFile, _ := createTestTailer(TailerOptions{Offset: 0}, false)
 		defer os.Remove(tmpFile.Name())
 
-		<-tl.Tailer.Lines
-
-		offset, err := tl.GetLastReadPosition()
-		assert.Nil(t, err)
-		assert.Equal(t, int64(4), offset)
-		assert.Equal(t, int64(4), tl.Offset)
+		if tailerInput, ok := tl.TailerInput.(*FileTailerInput); ok {
+			<-tailerInput.Tailer.Lines
+			offset, err := tl.GetLastReadPosition()
+			assert.Nil(t, err)
+			assert.Equal(t, int64(4), offset)
+			assert.Equal(t, int64(4), tailerInput.Offset)
+		}
 	})
 }
 

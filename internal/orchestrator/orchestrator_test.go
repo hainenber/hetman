@@ -203,9 +203,9 @@ func TestOrchestratorBackpressure(t *testing.T) {
 		// Block until first failed log delivery
 		<-logDeliveredChan
 
-		// Expect path-contained tailer and headless tailer to be eventually paused and running, respectively
+		// Expect headless tailer and path-contained tailer to be running and eventually paused, respectively
 		for _, tl := range orch.tailers {
-			if tl.Tailer == nil {
+			if tl.TailerInput == nil {
 				assert.Equal(t, state.Running, tl.GetState())
 			} else {
 				assert.Equal(t, state.Paused, tl.GetState())

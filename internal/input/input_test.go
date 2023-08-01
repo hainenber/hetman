@@ -9,6 +9,7 @@ import (
 
 	"github.com/hainenber/hetman/internal/tailer"
 	"github.com/hainenber/hetman/internal/telemetry/metrics"
+	"github.com/hainenber/hetman/internal/workflow"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -87,11 +88,16 @@ func TestInputRun(t *testing.T) {
 		// Register a tailer for file1
 		go func() {
 			tl, _ := tailer.NewTailer(tailer.TailerOptions{
-				File: file1Name,
+				Setting: workflow.InputConfig{
+					Paths: []string{file1Name},
+				},
 			})
-			<-tl.Tailer.Lines
-			i.RegisterTailer(tl)
-			doneTailerRegistrationChan <- struct{}{}
+
+			if tailerInput, ok := tl.TailerInput.(*tailer.FileTailerInput); ok {
+				<-tailerInput.Tailer.Lines
+				i.RegisterTailer(tl)
+				doneTailerRegistrationChan <- struct{}{}
+			}
 		}()
 
 		// Block until tailer has been initialized and registered
@@ -132,7 +138,7 @@ func TestInputRun(t *testing.T) {
 		// Register a tailer for file2
 		go func() {
 			tl, _ := tailer.NewTailer(tailer.TailerOptions{
-				File: file2Name,
+				Setting: workflow.InputConfig{Paths: []string{file2Name}},
 			})
 			i.RegisterTailer(tl)
 			doneTailerRegistrationChan <- struct{}{}
@@ -162,7 +168,7 @@ func TestRegisterTailer(t *testing.T) {
 
 	tmpFile, _ := os.CreateTemp("", "file1.log")
 	defer os.Remove(tmpFile.Name())
-	testTailer, _ := tailer.NewTailer(tailer.TailerOptions{File: tmpFile.Name()})
+	testTailer, _ := tailer.NewTailer(tailer.TailerOptions{Setting: workflow.InputConfig{Paths: []string{tmpFile.Name()}}})
 
 	i.RegisterTailer(testTailer)
 	assert.Contains(t, i.tailers, testTailer)
@@ -176,10 +182,10 @@ func TestGetTailer(t *testing.T) {
 	defer os.Remove(tmpFile1.Name())
 	tmpFile2, _ := os.CreateTemp("", "file2.log")
 	defer os.Remove(tmpFile2.Name())
-	testTailer1, _ := tailer.NewTailer(tailer.TailerOptions{File: tmpFile1.Name()})
-	defer testTailer1.Cleanup()
-	testTailer2, _ := tailer.NewTailer(tailer.TailerOptions{File: tmpFile2.Name()})
-	defer testTailer1.Cleanup()
+	testTailer1, _ := tailer.NewTailer(tailer.TailerOptions{Setting: workflow.InputConfig{Paths: []string{tmpFile1.Name()}}})
+	defer testTailer1.Close()
+	testTailer2, _ := tailer.NewTailer(tailer.TailerOptions{Setting: workflow.InputConfig{Paths: []string{tmpFile2.Name()}}})
+	defer testTailer1.Close()
 
 	i.RegisterTailer(testTailer1)
 	i.RegisterTailer(testTailer2)

@@ -98,6 +98,12 @@ type WorkflowOptions struct {
 	readPosition     int64
 }
 
+type WorkflowInputOption struct {
+	path    string
+	brokers []string
+	topics  []string
+}
+
 // Kickstart operations for forwarders and tailers
 // If logs were disk-persisted before, read them up for re-delivery
 func (o *Orchestrator) Run() struct{} {
@@ -252,11 +258,23 @@ func (o *Orchestrator) runWorkflow(workflowOptions []*WorkflowOptions) {
 
 	// Initiate workflow from path-to-forwarder map
 	for _, workflowOpts := range workflowOptions {
+		var workflowInputOptions []WorkflowInputOption
 		for _, translatedPath := range workflowOpts.inputConfig.Paths {
+			workflowInputOptions = append(workflowInputOptions, WorkflowInputOption{
+				path: translatedPath,
+			})
+		}
+
+		workflowInputOptions = append(workflowInputOptions, WorkflowInputOption{
+			brokers: workflowOpts.inputConfig.Brokers,
+			topics:  workflowOpts.inputConfig.Topics,
+		})
+
+		for _, workflowInputOption := range workflowInputOptions {
 			// Check if there's any saved offset for this file
 			// This can be override by read position present in workflow options
 			var offset int64
-			existingOffset, exists := o.registrar.Offsets[translatedPath]
+			existingOffset, exists := o.registrar.Offsets[workflowInputOption.path]
 			if exists {
 				offset = existingOffset
 			}
@@ -266,7 +284,11 @@ func (o *Orchestrator) runWorkflow(workflowOptions []*WorkflowOptions) {
 
 			// Initialize tailer with options
 			t, err := tailer.NewTailer(tailer.TailerOptions{
-				File:               translatedPath,
+				Setting: workflow.InputConfig{
+					Paths:   []string{workflowInputOption.path},
+					Brokers: workflowInputOption.brokers,
+					Topics:  workflowInputOption.topics,
+				},
 				Logger:             o.logger,
 				Offset:             offset,
 				BackpressureEngine: backpressureEngine,
@@ -274,7 +296,7 @@ func (o *Orchestrator) runWorkflow(workflowOptions []*WorkflowOptions) {
 			if err != nil {
 				o.logger.Error().Err(err).Msg("")
 			}
-			o.logger.Info().Msgf("Tailer for path %v has been initialized", translatedPath)
+			o.logger.Info().Msgf("Tailer for path %v has been initialized", workflowInputOption.path)
 
 			// Register tailer into workflow-wide backpressure engine
 			backpressureEngine.RegisterTailerChan(t.StateChan)
@@ -284,7 +306,7 @@ func (o *Orchestrator) runWorkflow(workflowOptions []*WorkflowOptions) {
 			// to continue tailing from correct offset for newly renamed file
 			if workflowOpts.input != nil {
 				workflowOpts.input.RegisterTailer(t)
-				o.logger.Info().Msgf("Tailer for path %v has been registered into input", translatedPath)
+				o.logger.Info().Msgf("Tailer for path %v has been registered into input", workflowInputOption.path)
 			}
 
 			// Each workflow has a single parser
@@ -310,8 +332,8 @@ func (o *Orchestrator) runWorkflow(workflowOptions []*WorkflowOptions) {
 				fwd := forwarder.NewForwarder(forwarder.ForwarderSettings{
 					ForwarderConfig: &fwdConf,
 					Logger:          &o.logger,
-					Signature:       fwdConf.CreateForwarderSignature(translatedPath),
-					Source:          translatedPath,
+					Signature:       fwdConf.CreateForwarderSignature(workflowInputOption.path),
+					Source:          workflowInputOption.path,
 				})
 				fwdBuffer := buffer.NewBuffer(buffer.BufferOption{
 					Signature:         fwd.GetSignature(),
@@ -369,8 +391,8 @@ func (o *Orchestrator) runWorkflow(workflowOptions []*WorkflowOptions) {
 				defer o.tailerWg.Done()
 				t.Run(ps.ParserChan)
 			}()
-			if t.Tailer != nil {
-				o.logger.Info().Msgf("Tailer for path \"%v\" is now running", t.Tailer.Filename)
+			if t.TailerInput != nil {
+				o.logger.Info().Msgf("Tailer for path \"%v\" is now running", workflowInputOption.path)
 			} else {
 				o.logger.Info().Msg("Tailer for upstream service and is now running")
 			}
@@ -461,12 +483,12 @@ func (o *Orchestrator) Close() {
 func (o *Orchestrator) PersistLastReadPositionForTailers() error {
 	lastReadPositions := make(map[string]int64, len(o.tailers))
 	for _, t := range o.tailers {
-		if t.Tailer != nil {
+		if t.TailerInput != nil {
 			offset, err := t.GetLastReadPosition()
 			if err != nil {
-				o.logger.Error().Err(err).Msgf("Failed getting last read position for tailer \"%s\"", t.Tailer.Filename)
+				o.logger.Error().Err(err).Msgf("Failed getting last read position for tailer \"%s\"", t.TailerInput.GetEventSource())
 			}
-			lastReadPositions[t.Tailer.Filename] = offset
+			lastReadPositions[t.TailerInput.GetEventSource()] = offset
 		}
 	}
 	return registry.SaveLastPosition(o.registrar.GetRegistryDirPath(), lastReadPositions)
