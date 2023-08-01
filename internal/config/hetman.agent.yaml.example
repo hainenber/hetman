@@ -11,6 +11,10 @@ targets:
       paths:
         - testdata/nginx/nginx.log 
         - testdata/nginx/*.log 
+    # type: kafka
+    # input:
+    #   brokers: ["localhost:9092"]
+    #   topics: ["test-input"]
     parser:
       format: json
     modifier: 
@@ -27,6 +31,9 @@ targets:
           pattern: ".*"
           replacement: "****"
     forwarders:
+      # - kafka:
+      #     brokers: ["localhost:9092"]
+      #     topics: ["test-output"]
       - loki:
           url: http://localhost:3100/loki/api/v1/push
           add_tags:
