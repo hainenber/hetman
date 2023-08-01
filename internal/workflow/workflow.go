@@ -26,7 +26,7 @@ type ForwarderConfig struct {
 
 type KafkaForwarderConfig struct {
 	Brokers []string `koanf:"brokers"`
-	Topics  []string `koanf:"topic"`
+	Topics  []string `koanf:"topics"`
 }
 
 type LokiForwarderConfig struct {
