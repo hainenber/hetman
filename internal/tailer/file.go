@@ -23,7 +23,7 @@ type FileTailerInputOption struct {
 	offset int64
 }
 
-func NewFileTailer(opt FileTailerInputOption) (*FileTailerInput, error) {
+func NewFileTailerInput(opt FileTailerInputOption) (*FileTailerInput, error) {
 	var (
 		location          *tail.SeekInfo
 		initializedTailer *tail.Tail
