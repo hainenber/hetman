@@ -5,7 +5,6 @@ import (
 	"github.com/fatih/structs"
 	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/hainenber/hetman/internal/workflow"
-	"github.com/samber/lo"
 )
 
 type KafkaOutput struct {
@@ -15,7 +14,7 @@ type KafkaOutput struct {
 
 type KafkaOutputSetting struct {
 	Brokers []string
-	Topic   string
+	Topics  []string
 }
 
 func NewKafkaOutput(setting KafkaOutputSetting) (*KafkaOutput, error) {
@@ -35,14 +34,17 @@ func NewKafkaOutput(setting KafkaOutputSetting) (*KafkaOutput, error) {
 	}, nil
 }
 
-func (k KafkaOutput) PreparePayload(forwardArgs ...pipeline.Data) (func() error, error) {
+func (k KafkaOutput) SendEvents(forwardArgs ...pipeline.Data) (func() error, error) {
 	// Convert event in pipeline.Data to sarama.Message format
-	kafkaMessages := lo.Map(forwardArgs, func(item pipeline.Data, _ int) *sarama.ProducerMessage {
-		return &sarama.ProducerMessage{
-			Topic: k.settings.Topic,
-			Value: sarama.StringEncoder(item.LogLine),
+	var kafkaMessages []*sarama.ProducerMessage
+	for _, topic := range k.settings.Topics {
+		for _, item := range forwardArgs {
+			kafkaMessages = append(kafkaMessages, &sarama.ProducerMessage{
+				Topic: topic,
+				Value: sarama.StringEncoder(item.LogLine),
+			})
 		}
-	})
+	}
 
 	innerForwarderFunc := func() error {
 		if err := k.producer.SendMessages(kafkaMessages); err != nil {

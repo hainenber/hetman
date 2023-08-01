@@ -26,7 +26,7 @@ type ForwarderConfig struct {
 
 type KafkaForwarderConfig struct {
 	Brokers []string `koanf:"brokers"`
-	Topic   string   `koanf:"topic"`
+	Topics  []string `koanf:"topic"`
 }
 
 type LokiForwarderConfig struct {
@@ -95,7 +95,7 @@ func (conf *ForwarderConfig) CreateForwarderSignature(logSourcePath string) stri
 	}
 
 	if conf.Kafka != nil {
-		fwdConfParts = append(fwdConfParts, conf.Kafka.Topic)
+		fwdConfParts = append(fwdConfParts, conf.Kafka.Topics...)
 		fwdConfParts = append(fwdConfParts, conf.Kafka.Brokers...)
 	}
 
