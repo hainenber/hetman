@@ -48,10 +48,21 @@ func NewTailer(tailerOptions TailerOptions) (*Tailer, error) {
 	)
 
 	if len(tailerOptions.Setting.Paths) == 1 && tailerOptions.Setting.Paths[0] != "" {
-		tailerInput, err = NewFileTailer(FileTailerInputOption{
+		tailerInput, err = NewFileTailerInput(FileTailerInputOption{
 			file:   tailerOptions.Setting.Paths[0],
 			logger: tailerOptions.Logger,
 			offset: tailerOptions.Offset,
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if len(tailerOptions.Setting.Brokers) != 0 && len(tailerOptions.Setting.Topics) != 0 {
+		tailerInput, err = NewKafkaTailerInput(KafkaTailerInputOption{
+			brokers: tailerOptions.Setting.Brokers,
+			topics:  tailerOptions.Setting.Topics,
+			logger:  tailerOptions.Logger,
 		})
 		if err != nil {
 			return nil, err

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/IBM/sarama"
 	"github.com/hainenber/hetman/internal/backpressure"
 	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/hainenber/hetman/internal/tailer/state"
@@ -33,7 +34,7 @@ func createTestTailer(opts TailerOptions, aggregatorMode bool) (*Tailer, *os.Fil
 	}
 
 	tl, err := NewTailer(TailerOptions{
-		Setting:            workflow.InputConfig{Paths: paths},
+		Setting:            workflow.InputConfig{Paths: paths, Brokers: opts.Setting.Brokers, Topics: opts.Setting.Topics},
 		Offset:             opts.Offset,
 		BackpressureEngine: opts.BackpressureEngine,
 	})
@@ -43,8 +44,28 @@ func createTestTailer(opts TailerOptions, aggregatorMode bool) (*Tailer, *os.Fil
 
 func TestNewTailer(t *testing.T) {
 	t.Parallel()
-	t.Run("tailer with given filepath", func(t *testing.T) {
+	t.Run("create file-based tailers", func(t *testing.T) {
 		tl, tmpFile, err := createTestTailer(TailerOptions{}, false)
+		defer os.Remove(tmpFile.Name())
+		assert.Nil(t, err)
+		assert.NotNil(t, tl)
+		assert.NotNil(t, tl.TailerInput)
+	})
+	t.Run("create Kafka-based tailers", func(t *testing.T) {
+		// Create mock Kafka broker for testing
+		mockBroker := sarama.NewMockBroker(t, 0)
+		mockBroker.SetHandlerByMap(map[string]sarama.MockResponse{
+			"MetadataRequest": sarama.NewMockMetadataResponse(t).
+				SetBroker(mockBroker.Addr(), mockBroker.BrokerID()).
+				SetLeader("test.topic", 0, mockBroker.BrokerID()),
+		})
+
+		tl, tmpFile, err := createTestTailer(TailerOptions{
+			Setting: workflow.InputConfig{
+				Brokers: []string{mockBroker.Addr()},
+				Topics:  []string{"foo", "bar"},
+			},
+		}, false)
 		defer os.Remove(tmpFile.Name())
 		assert.Nil(t, err)
 		assert.NotNil(t, tl)
