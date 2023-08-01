@@ -116,7 +116,7 @@ func (i *Input) Run() {
 					if followedEvent.Has(fsnotify.Rename) {
 						tailer := i.getTailer(followedEvent.Name)
 						if tailer != nil {
-							lastReadPosition, err := tailer.Tailer.Tell()
+							lastReadPosition, err := tailer.TailerInput.GetLastReadPosition()
 							if err != nil {
 								i.logger.Error().Err(err).Msg("")
 							} else {
@@ -157,7 +157,7 @@ func (i *Input) getTailer(path string) *tailer.Tailer {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	for _, t := range i.tailers {
-		if t.Tailer.Filename == path {
+		if t.TailerInput.GetEventSource() == path {
 			return t
 		}
 	}

@@ -3,23 +3,20 @@ package tailer
 import (
 	"context"
 	"fmt"
-	"io"
-	"log"
-	"strings"
 	"sync"
+	"time"
 
 	"github.com/hainenber/hetman/internal/backpressure"
 	"github.com/hainenber/hetman/internal/pipeline"
 	"github.com/hainenber/hetman/internal/tailer/state"
 	"github.com/hainenber/hetman/internal/telemetry/metrics"
-	"github.com/nxadm/tail"
+	"github.com/hainenber/hetman/internal/workflow"
 	"github.com/rs/zerolog"
 )
 
 type Tailer struct {
 	mu                 sync.Mutex
-	Tailer             *tail.Tail
-	Offset             int64
+	TailerInput        TailerInput
 	ctx                context.Context
 	cancelFunc         context.CancelFunc
 	logger             zerolog.Logger
@@ -30,48 +27,35 @@ type Tailer struct {
 }
 
 type TailerOptions struct {
-	File               string
+	Setting            workflow.InputConfig
 	Logger             zerolog.Logger
 	Offset             int64
 	BackpressureEngine *backpressure.Backpressure
 }
 
+type TailerInput interface {
+	Stop() error
+	Run(func(string, *time.Time))
+	GetEventSource() string
+	UpdateLastReadPosition(state.TailerState) (int64, error)
+	GetLastReadPosition() (int64, error)
+}
+
 func NewTailer(tailerOptions TailerOptions) (*Tailer, error) {
-	// Logger for tailer's output
-	tailerLogger := log.New(
-		tailerOptions.Logger.With().Str("source", "tailer").Logger(),
-		"",
-		log.Default().Flags(),
-	)
-
-	// Set offset to continue, if halted before
-	var location *tail.SeekInfo
-	if tailerOptions.Offset != 0 {
-		location = &tail.SeekInfo{
-			Offset: tailerOptions.Offset,
-			Whence: io.SeekStart,
-		}
-	}
-
-	// Create tailer
 	var (
-		instantiatedTailer *tail.Tail
-		err                error
+		tailerInput TailerInput
+		err         error
 	)
-	if strings.Contains(tailerOptions.File, "/") {
-		instantiatedTailer, err = tail.TailFile(
-			tailerOptions.File,
-			tail.Config{
-				Follow:   true,
-				ReOpen:   true,
-				Logger:   tailerLogger,
-				Location: location,
-			},
-		)
+
+	if len(tailerOptions.Setting.Paths) == 1 && tailerOptions.Setting.Paths[0] != "" {
+		tailerInput, err = NewFileTailer(FileTailerInputOption{
+			file:   tailerOptions.Setting.Paths[0],
+			logger: tailerOptions.Logger,
+			offset: tailerOptions.Offset,
+		})
 		if err != nil {
 			return nil, err
 		}
-
 	}
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
@@ -82,7 +66,7 @@ func NewTailer(tailerOptions TailerOptions) (*Tailer, error) {
 	return &Tailer{
 		ctx:                ctx,
 		cancelFunc:         cancelFunc,
-		Tailer:             instantiatedTailer,
+		TailerInput:        tailerInput,
 		logger:             tailerOptions.Logger,
 		StateChan:          make(chan state.TailerState, 1024),
 		UpstreamDataChan:   make(chan pipeline.Data, 1024),
@@ -91,74 +75,45 @@ func NewTailer(tailerOptions TailerOptions) (*Tailer, error) {
 }
 
 func (t *Tailer) Run(parserChan chan pipeline.Data) {
+	relayEventFunc := func(data string, consumeTime *time.Time) {
+		// Block until get backpressure response
+		// If tailer is closed off, skip to next iteration to catch context cancellation
+		if tailerIsClosed := t.waitForBackpressureResponse(len(data)); tailerIsClosed {
+			return
+		}
+
+		// Submit metrics
+		metrics.Meters.IngestedLogCount.Add(t.ctx, 1)
+
+		// Relay tailed log line to next component in the workflow: parser
+		relayedData := pipeline.Data{
+			LogLine: data,
+		}
+		if consumeTime != nil {
+			relayedData.Timestamp = fmt.Sprint(consumeTime.UnixNano())
+		}
+		parserChan <- relayedData
+	}
+
 	t.SetState(state.Running)
 
-	// For non-file tailer, there's no initialized tailer.Tailer
-	if t.Tailer == nil {
+	// For non-file tailer, there's no initialized TailerInput
+	if t.TailerInput == nil {
 		for {
 			select {
 
 			// Close down all activities once receiving termination signals
 			case <-t.ctx.Done():
 				t.SetState(state.Closed)
-				err := t.Cleanup()
-				if err != nil {
-					t.logger.Error().Err(err).Msg("")
-				}
 				// Buffer channels will stil be open to receive failed-to-forward log
 				return
 
 			case line := <-t.UpstreamDataChan:
-				// Block until get backpressure response
-				// If tailer is closed off, skip to next iteration to catch context cancellation
-				if tailerIsClosed := t.waitForBackpressureResponse(len(line.LogLine)); tailerIsClosed {
-					continue
-				}
-
-				// Submit metrics
-				metrics.Meters.IngestedLogCount.Add(t.ctx, 1)
-
-				// Relay tailed log line to next component in the workflow, buffer
-				parserChan <- line
-
+				relayEventFunc(line.LogLine, nil)
 			}
 		}
 	} else {
-		for {
-			select {
-
-			// Close down all activities once receiving termination signals
-			case <-t.ctx.Done():
-				t.SetState(state.Closed)
-				err := t.Cleanup()
-				if err != nil {
-					t.logger.Error().Err(err).Msg("")
-				}
-				// Buffer channels will stil be open to receive failed-to-forward log
-				return
-
-			case line := <-t.Tailer.Lines:
-				// Discard unrecognized tailed message
-				if line == nil || line.Text == "" {
-					continue
-				}
-
-				// Block until get backpressure response
-				// If tailer is closed off, skip to next iteration to catch context cancellation
-				if tailerIsClosed := t.waitForBackpressureResponse(len(line.Text)); tailerIsClosed {
-					continue
-				}
-
-				// Submit metrics
-				metrics.Meters.IngestedLogCount.Add(t.ctx, 1)
-
-				// Relay tailed log line to next component in the workflow, buffer
-				parserChan <- pipeline.Data{
-					Timestamp: fmt.Sprint(line.Time.UnixNano()),
-					LogLine:   line.Text,
-				}
-			}
-		}
+		t.TailerInput.Run(relayEventFunc)
 	}
 }
 
@@ -177,13 +132,6 @@ func (t *Tailer) waitForBackpressureResponse(lineSize int) bool {
 
 	// Skip to next iteration to catch context cancellation
 	return t.GetState() == state.Closed
-}
-
-func (t *Tailer) Cleanup() error {
-	if t.Tailer != nil {
-		return t.Tailer.Stop()
-	}
-	return nil
 }
 
 func (t *Tailer) GetState() state.TailerState {
@@ -208,28 +156,16 @@ func (t *Tailer) Close() {
 	// Set tailer to closed state
 	t.state = state.Closed
 
-	t.cancelFunc()
+	if t.TailerInput == nil {
+		t.cancelFunc()
+	} else {
+		t.TailerInput.Stop()
+	}
 }
 
 func (t *Tailer) GetLastReadPosition() (int64, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	var (
-		offset int64
-		err    error
-	)
-
-	// Only get last read position when tailer isn't closed
-	if t.Tailer != nil && t.state != state.Closed {
-		offset, err = t.Tailer.Tell()
-		t.Offset = offset
-	}
-
-	// Immediately return registered last read position when tailer is closed
-	if t.state == state.Closed {
-		return t.Offset, nil
-	}
-
-	return offset, err
+	return t.TailerInput.UpdateLastReadPosition(t.state)
 }
