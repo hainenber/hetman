@@ -15,9 +15,16 @@ import (
 )
 
 type Agent struct {
-	Orchestrator *orchestrator.Orchestrator
-	ConfigFile   string
-	LogLevel     string
+	Orchestrator  *orchestrator.Orchestrator
+	TerminateChan chan os.Signal
+	ConfigFile    string
+	LogLevel      string
+}
+
+func (a *Agent) Close() {
+	if a.TerminateChan != nil {
+		a.TerminateChan <- syscall.SIGTERM
+	}
 }
 
 func (a *Agent) IsReady() bool {
@@ -32,11 +39,12 @@ func (a *Agent) Run() {
 		wg                 sync.WaitGroup
 		logger             = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 		logLevel           zerolog.Level
-		terminationSigs    = make(chan os.Signal, 1)
 		doneChan           = make(chan struct{}, 1)
 		doneCleanupChan    = make(chan struct{}, 1)
 		reloadedConfigChan = make(chan *config.Config, 1) // Only allow 1 reload attempt at the same time
 	)
+
+	a.TerminateChan = make(chan os.Signal, 1)
 
 	// Set global log level
 	switch a.LogLevel {
@@ -59,10 +67,10 @@ func (a *Agent) Run() {
 	// Intercept termination signals like Ctrl-C
 	// Graceful shutdown and cleanup resources (goroutines and channels)
 	defer func() {
-		signal.Stop(terminationSigs)
-		close(terminationSigs)
+		signal.Stop(a.TerminateChan)
+		close(a.TerminateChan)
 	}()
-	signal.Notify(terminationSigs, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(a.TerminateChan, os.Interrupt, syscall.SIGTERM)
 
 	// Instantiate OpenTelemetry's global metric provider
 	// It will shut down once the orchestrator loop breaks out as well
@@ -88,7 +96,7 @@ out:
 	for {
 		select {
 
-		case <-terminationSigs:
+		case <-a.TerminateChan:
 			if a.Orchestrator != nil {
 				doneChan <- struct{}{}
 				<-doneCleanupChan
