@@ -1,6 +1,6 @@
-# Genuine configs
-hetman.agent.yaml
-hetman.aggregator.yaml
+# Genuine configs at project root
+./hetman.agent.yaml
+./hetman.aggregator.yaml
 
 # Build binary 
 bin
