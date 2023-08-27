@@ -10,12 +10,14 @@ At the moment, the agent only supports Loki as downstream log consumer
 * Correctly follow post-renaming both old and new files, similar to `logrotate`'s `create` directive.
 * Correctly follow file when rotated by truncating old files, similar to `logrotate`'s `copytruncate` directive.
 * Reset read position of a tailed file during truncation.
-* Gracefully reload configurations changes when sending SIGHUP to running agent
+* Gracefully reload configurations changes when sending SIGHUP to running agent.
 * Deliver logs in batches.
-* Built-in backpressure engine to control input/output bandwidth  
+* Built-in backpressure engine to control input/output bandwidth.
 * High percentage of code coverage (>= 80% for the majority of components)
-* Capable to parse multi-line logs
+* Capable to parse multi-line logs.
+* Support multiple downstreams:
+    * Loki
+    * Kafka
 
 ## Roadmap
-- [ ] Fleet management
-- [ ] Support multiple downstreams aside from Loki.
+- [ ] Fleet management.
