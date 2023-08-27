@@ -1,7 +1,7 @@
 global:
   registry_directory: /tmp
   disk_buffer:
-    size: 1Gb
+    size: 1GB
   backpressure_memory_limit: 0
 
 targets:
