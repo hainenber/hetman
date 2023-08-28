@@ -18,9 +18,11 @@ import (
 )
 
 type Aggregator struct {
-	ConfigFile string
-	Port       int
-	LogLevel   string
+	ConfigFile    string
+	Port          int
+	LogLevel      string
+	agent         *Agent
+	terminateChan chan os.Signal
 }
 
 // receiveLogPayload accepts log payload from upstreams and relay to next stage of agent's processing pipeline
@@ -82,32 +84,42 @@ func receiveLogPayload(inputChans []chan pipeline.Data) func(w http.ResponseWrit
 	}
 }
 
+func (a *Aggregator) Close() {
+	if a.agent != nil {
+		a.agent.Close()
+	}
+	if a.terminateChan != nil {
+		a.terminateChan <- syscall.SIGTERM
+	}
+}
+
 func (a *Aggregator) Run() {
 	var (
-		agent = Agent{
-			ConfigFile: a.ConfigFile,
-			LogLevel:   a.LogLevel,
-		}
-		srv                = &http.Server{Addr: fmt.Sprintf(":%v", a.Port)}
-		doneHttpServerChan = make(chan os.Signal, 1)
-		wg                 sync.WaitGroup
-		sleepCount         int
+		srv        = &http.Server{Addr: fmt.Sprintf(":%v", a.Port)}
+		wg         sync.WaitGroup
+		sleepCount int
 	)
-	signal.Notify(doneHttpServerChan, os.Interrupt, syscall.SIGTERM)
+
+	a.agent = &Agent{
+		ConfigFile: a.ConfigFile,
+		LogLevel:   a.LogLevel,
+	}
+	a.terminateChan = make(chan os.Signal, 1)
+	signal.Notify(a.terminateChan, os.Interrupt, syscall.SIGTERM)
 
 	// Kickstart internal agent mode to run parallel with aggregator
 	// For log processing
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		agent.Run()
+		a.agent.Run()
 	}()
 
 	// Wait until orchestrator's components have finished instantiation of components
 	// If not, shutdown internal agent and exit with non-zero err code
-	for !agent.IsReady() {
+	for !a.agent.IsReady() {
 		if sleepCount > 20 {
-			agent.Orchestrator.Shutdown()
+			a.agent.Orchestrator.Shutdown()
 			wg.Wait()
 			log.Fatal().Msg("Aggregator waiting too long for internal agent's initialization, 10 seconds have already elapsed! Please rerun the aggregator.")
 		}
@@ -116,14 +128,14 @@ func (a *Aggregator) Run() {
 	}
 
 	// Add a POST "/logs" route
-	upstreamDataChans := agent.Orchestrator.GetUpstreamDataChans()
+	upstreamDataChans := a.agent.Orchestrator.GetUpstreamDataChans()
 	http.HandleFunc("/logs", receiveLogPayload(upstreamDataChans))
 
 	// A goroutine to gracefully close down HTTP server once signal received
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		<-doneHttpServerChan
+		<-a.terminateChan
 		srv.Shutdown(context.Background())
 	}()
 
@@ -132,4 +144,6 @@ func (a *Aggregator) Run() {
 
 	// Ensure log processing pipeline is properly closed and cleaned
 	wg.Wait()
+
+	log.Info().Msg("Aggregator server has been closed.")
 }
