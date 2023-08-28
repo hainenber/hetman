@@ -15,9 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestMain(m *testing.M) {
-	metrics.InitializeNopMetricProvider()
-
+func createAgentTestResources() func() {
 	// Create temp log files and forwarder server for testing agent
 	forwarder := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -30,19 +28,28 @@ func TestMain(m *testing.M) {
 	forwarder.Listener.Close()
 	forwarder.Listener = listener
 	forwarder.Start()
-	defer forwarder.Close()
 
 	if err := os.MkdirAll("/tmp/test_hetman_cmd_agent", 0777); err != nil {
 		log.Error().Err(err).Msg("")
 		os.Exit(1)
 	}
 	os.WriteFile("/tmp/test_hetman_cmd_agent/testlog_9852.log", []byte(`{"a":"b","c":"secretive"}`), 0777)
-	defer os.RemoveAll("/tmp/test_hetman_cmd_agent")
+
+	return func() {
+		forwarder.Close()
+		os.RemoveAll("/tmp/test_hetman_cmd_agent")
+	}
+}
+
+func TestMain(m *testing.M) {
+	metrics.InitializeNopMetricProvider()
 
 	os.Exit(m.Run())
 }
 
 func TestAgentRun(t *testing.T) {
+	cleanupFunc := createAgentTestResources()
+	defer cleanupFunc()
 	t.Run("agent can run and close after receiving SIGTERM signal", func(t *testing.T) {
 		var wg sync.WaitGroup
 		agent := Agent{
@@ -66,6 +73,8 @@ func TestAgentRun(t *testing.T) {
 }
 
 func TestAgentIsReady(t *testing.T) {
+	cleanupFunc := createAgentTestResources()
+	defer cleanupFunc()
 	t.Run("agent isn't ready when it isn't triggered to run yet", func(t *testing.T) {
 		var wg sync.WaitGroup
 		agent := Agent{
