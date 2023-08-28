@@ -1,0 +1,19 @@
+global:
+  registry_directory: /tmp
+  disk_buffer:
+    size: 1GB
+  backpressure_memory_limit: 500
+
+targets:
+  - id: nginx
+    parser:
+      format: json
+    forwarders:
+      - loki:
+          url: http://localhost:50000
+          add_tags:
+            label: hetman
+            source: nginx
+            dest: loki
+          compress_request: false 
+          probe_readiness: false
