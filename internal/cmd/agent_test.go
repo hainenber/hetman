@@ -15,8 +15,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var wd string
-
 func TestMain(m *testing.M) {
 	metrics.InitializeNopMetricProvider()
 
@@ -40,12 +38,6 @@ func TestMain(m *testing.M) {
 	}
 	os.WriteFile("/tmp/test_hetman_cmd_agent/testlog_9852.log", []byte(`{"a":"b","c":"secretive"}`), 0777)
 	defer os.RemoveAll("/tmp/test_hetman_cmd_agent")
-
-	wd, err = os.Getwd()
-	if err != nil {
-		log.Error().Err(err).Msg("")
-		os.Exit(1)
-	}
 
 	os.Exit(m.Run())
 }
